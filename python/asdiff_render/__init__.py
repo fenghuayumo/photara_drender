@@ -10,6 +10,12 @@ from ._asdiff_render import (
     unwrap_uv,
 )
 from .baking import BakedTexture, UnwrappedMesh, project_texture_atlas, unwrap_mesh_uv
+from .colmap import ColmapProjection, load_colmap_projection, load_projection_masks, read_colmap_text_model
+from .mesh_processing import (
+    MeshPreparationOptions,
+    MeshPreparationResult,
+    prepare_mesh_for_baking,
+)
 
 try:
     from .torch import interpolate, rasterize, texture
@@ -37,7 +43,10 @@ except ImportError:
 __all__ = [
     "AtlasOptimizationOptions",
     "BakedTexture",
+    "ColmapProjection",
     "DeviceInfo",
+    "MeshPreparationOptions",
+    "MeshPreparationResult",
     "Rasterizer",
     "TexturedRender",
     "TextureBaker",
@@ -47,14 +56,18 @@ __all__ = [
     "enumerate_devices",
     "has_uv_atlas_backend",
     "interpolate",
+    "load_colmap_projection",
+    "load_projection_masks",
     "masked_charbonnier_loss",
     "optimize_texture_atlas",
     "project_texture_atlas",
+    "prepare_mesh_for_baking",
     "rasterize",
+    "read_colmap_text_model",
     "render_textured_mesh",
     "seam_consistency_loss",
     "texture",
     "unwrap_mesh_uv",
     "unwrap_uv",
 ]
-__version__ = "0.3.0"
+__version__ = "0.4.0"

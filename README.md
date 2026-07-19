@@ -3,7 +3,7 @@
 `asdiff_render` 是使用 C++20、Vulkan 1.2 compute 和 HLSL 从零实现的跨平台可微渲染与纹理烘焙库。
 它不依赖 CUDA 或 OpenGL 上下文，提供 C++、NumPy 和 PyTorch 接口。
 
-当前 `0.3.0` 版本包含：
+当前 `0.4.0` 版本包含：
 
 - tile-binned 可微三角形光栅化、透视正确重心坐标和像素导数；
 - 顶点属性插值及其反向传播；
@@ -32,6 +32,8 @@ ctest --test-dir build -C Release --output-on-failure
 
 - `ASDIFF_ENABLE_UVATLAS=OFF`：只构建渲染和投影模块；
 - `ASDIFF_FETCH_UVATLAS=OFF`：要求环境中存在 `uvatlas` CMake package；
+- `ASDIFF_UVATLAS_USE_OPENMP=ON`：启用 UVAtlas 上游的 OpenMP chart 参数化；
+- `ASDIFF_BUILD_MESH_TOOLS=ON`：构建使用 CGAL 的流形修复与 Decimation 工具；
 - `ASDIFF_ENABLE_VALIDATION=ON`：启用 Vulkan validation layer。
 
 Python wheel 可以使用 `python -m pip wheel .` 构建。
@@ -66,9 +68,38 @@ confidence = baked.confidence
 source_view = baked.source_view
 ```
 
-输入照片和输出 atlas 均为 `[height, width, channels]` float32，坐标原点在左下角。OpenCV/PIL 读入的
-左上角原点图像需要先垂直翻转。详细矩阵、viewport 和 AIHoloImager 接入约定见
+输入照片和输出 atlas 均为 `[height, width, channels]` float32，数组第 0 行对应图像顶部。使用
+`load_colmap_projection()` 时可直接传入 OpenCV/PIL 图像，无需垂直翻转。详细矩阵、viewport 和 AIHoloImager 接入约定见
 [纹理烘焙指南](docs/texture_baking.md)。
+
+## 扫描 mesh 完整流水线
+
+`prepare_mesh_for_baking()` 按固定顺序执行 Instant Meshes 重网格化、CGAL polygon-soup 流形修复、
+保边界 Decimation 和 UVAtlas 展 UV。随后可用 COLMAP 文本模型直接烘焙：
+
+```python
+prepared = prepare_mesh_for_baking(
+    "mesh.ply",
+    cgal_executable="asdiff_mesh_preprocessor.exe",
+)
+projection = load_colmap_projection(
+    "sparse/0",
+    "images",
+    mesh_positions=prepared.mesh.positions,
+)
+masks = load_projection_masks("masks", projection.image_names)
+baked = project_texture_atlas(
+    prepared.mesh,
+    projection.images,
+    projection.world_to_clip,
+    projection.camera_positions,
+    visibility_masks=masks,
+    visibility_mode="hybrid_ray_query",
+)
+```
+
+命令行示例见 `examples/bake_colmap.py`，拓扑保证和构建方式见
+[mesh 预处理说明](docs/mesh_preprocessing.md)。
 
 ## 可微 atlas 优化
 

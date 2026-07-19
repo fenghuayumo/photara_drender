@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(asdiff_render VERSION 0.3.0 LANGUAGES CXX)
+project(asdiff_render VERSION 0.4.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -10,6 +10,8 @@ option(ASDIFF_BUILD_TESTS "Build native tests" ON)
 option(ASDIFF_ENABLE_VALIDATION "Enable Vulkan validation by default" OFF)
 option(ASDIFF_ENABLE_UVATLAS "Enable Microsoft UVAtlas unwrapping" ON)
 option(ASDIFF_FETCH_UVATLAS "Fetch a pinned UVAtlas source release when it is not installed" ON)
+option(ASDIFF_UVATLAS_USE_OPENMP "Enable UVAtlas OpenMP parallelism" ON)
+option(ASDIFF_BUILD_MESH_TOOLS "Build GPL/commercial CGAL mesh preprocessing tools" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -31,7 +33,7 @@ if(ASDIFF_ENABLE_UVATLAS)
     elseif(WIN32 AND ASDIFF_FETCH_UVATLAS)
         include(FetchContent)
         set(BUILD_TOOLS OFF CACHE BOOL "" FORCE)
-        set(UVATLAS_USE_OPENMP OFF CACHE BOOL "" FORCE)
+        set(UVATLAS_USE_OPENMP ${ASDIFF_UVATLAS_USE_OPENMP} CACHE BOOL "" FORCE)
         FetchContent_Declare(
             uvatlas
             URL https://codeload.github.com/microsoft/UVAtlas/tar.gz/refs/tags/oct2025
@@ -160,6 +162,14 @@ if(ASDIFF_BUILD_PYTHON)
         "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/baking.py"
         "${CMAKE_CURRENT_BINARY_DIR}/python/asdiff_render/baking.py"
         COPYONLY)
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/colmap.py"
+        "${CMAKE_CURRENT_BINARY_DIR}/python/asdiff_render/colmap.py"
+        COPYONLY)
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/mesh_processing.py"
+        "${CMAKE_CURRENT_BINARY_DIR}/python/asdiff_render/mesh_processing.py"
+        COPYONLY)
 
     pybind11_add_module(_asdiff_render python/bindings.cpp)
     target_link_libraries(_asdiff_render PRIVATE asdiff::render Python::NumPy)
@@ -185,6 +195,12 @@ if(ASDIFF_BUILD_PYTHON)
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/baking.py"
                 "$<TARGET_FILE_DIR:_asdiff_render>/baking.py"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/colmap.py"
+                "$<TARGET_FILE_DIR:_asdiff_render>/colmap.py"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/mesh_processing.py"
+                "$<TARGET_FILE_DIR:_asdiff_render>/mesh_processing.py"
         COMMAND "${CMAKE_COMMAND}" -E make_directory
                 "$<TARGET_FILE_DIR:_asdiff_render>/shaders")
     foreach(shader_binary IN LISTS ASDIFF_SHADER_BINARIES)
@@ -194,6 +210,15 @@ if(ASDIFF_BUILD_PYTHON)
                     "$<TARGET_FILE_DIR:_asdiff_render>/shaders/")
     endforeach()
     install(TARGETS _asdiff_render LIBRARY DESTINATION asdiff_render RUNTIME DESTINATION asdiff_render)
+    install(
+        FILES
+            python/asdiff_render/__init__.py
+            python/asdiff_render/torch.py
+            python/asdiff_render/atlas.py
+            python/asdiff_render/baking.py
+            python/asdiff_render/colmap.py
+            python/asdiff_render/mesh_processing.py
+        DESTINATION asdiff_render)
     install(FILES ${ASDIFF_SHADER_BINARIES} DESTINATION asdiff_render/shaders)
 endif()
 
@@ -209,6 +234,10 @@ if(ASDIFF_BUILD_TESTS)
                     "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/python"
                     "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/python_smoke.py")
     endif()
+endif()
+
+if(ASDIFF_BUILD_MESH_TOOLS)
+    add_subdirectory(tools/mesh_preprocessor)
 endif()
 
 install(TARGETS asdiff_render EXPORT asdiff_render_targets)
