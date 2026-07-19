@@ -6,11 +6,20 @@ endif()
 include(GNUInstallDirs)
 find_package(CGAL CONFIG REQUIRED)
 
-option(ASDIFF_ENABLE_INSTANT_MESHES "Build optional Instant Meshes remeshing backend" OFF)
+if(NOT DEFINED ASDIFF_ENABLE_INSTANT_MESHES)
+    option(ASDIFF_ENABLE_INSTANT_MESHES "Fetch Instant Meshes and enable C++ remesh_field_aligned" ON)
+endif()
 
-add_library(asdiff_mesh
+set(ASDIFF_MESH_SOURCES
     src/mesh_ops.cpp
-    src/pipeline.cpp)
+    src/pipeline.cpp
+    src/remesh_instant.cpp)
+
+if(ASDIFF_ENABLE_INSTANT_MESHES)
+    include("${CMAKE_SOURCE_DIR}/cmake/FetchInstantMeshes.cmake")
+endif()
+
+add_library(asdiff_mesh ${ASDIFF_MESH_SOURCES})
 add_library(asdiff::mesh ALIAS asdiff_mesh)
 target_compile_features(asdiff_mesh PUBLIC cxx_std_20)
 target_include_directories(asdiff_mesh
@@ -21,6 +30,9 @@ target_link_libraries(asdiff_mesh
     PUBLIC
         CGAL::CGAL
         asdiff::render)
+if(ASDIFF_ENABLE_INSTANT_MESHES)
+    target_link_libraries(asdiff_mesh PRIVATE InstantMeshesLib)
+endif()
 target_compile_definitions(asdiff_mesh
     PUBLIC
         ASDIFF_HAS_INSTANT_MESHES=$<BOOL:${ASDIFF_ENABLE_INSTANT_MESHES}>)

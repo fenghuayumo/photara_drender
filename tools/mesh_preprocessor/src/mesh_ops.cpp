@@ -212,18 +212,4 @@ MeshStatistics inspect_triangle_mesh(
     return statistics;
 }
 
-#if !ASDIFF_HAS_INSTANT_MESHES
-bool has_instant_meshes_backend() noexcept {
-    return false;
-}
-
-TriangleMesh remesh_field_aligned(
-    std::span<const float>,
-    std::span<const std::uint32_t>,
-    const RemeshOptions&) {
-    throw std::runtime_error(
-        "Instant Meshes support was not built; configure with ASDIFF_ENABLE_INSTANT_MESHES=ON");
-}
-#endif
-
 } // namespace asdiff_mesh

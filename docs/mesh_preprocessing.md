@@ -2,8 +2,8 @@
 
 The production ordering is entirely in-memory when `ASDIFF_BUILD_MESH_TOOLS=ON`:
 
-1. Instant Meshes optionally remeshes the input (C++ backend when
-   `ASDIFF_ENABLE_INSTANT_MESHES=ON`, otherwise the optional Python binding).
+1. Instant Meshes optionally remeshes the input in memory via FetchContent'd Instant Meshes
+   (`ASDIFF_ENABLE_INSTANT_MESHES=ON`, default when mesh tools are enabled).
 2. CGAL repairs and orients the source or remeshed polygon soup in memory, duplicates
    combinatorially non-manifold vertices, removes degeneracies, stitches compatible
    borders, and removes isolated vertices.
@@ -37,7 +37,8 @@ On Windows with the local vcpkg CGAL installation:
 cmake -S . -B build_cgal `
   -DCMAKE_TOOLCHAIN_FILE=D:/ProgramTool/vcpkg/scripts/buildsystems/vcpkg.cmake `
   -DASDIFF_BUILD_MESH_TOOLS=ON `
-  -DASDIFF_UVATLAS_USE_OPENMP=ON
+  -DASDIFF_ENABLE_INSTANT_MESHES=ON `
+  -DASDIFF_UVATLAS_USE_OPENMP=OFF
 cmake --build build_cgal --config Release
 ```
 

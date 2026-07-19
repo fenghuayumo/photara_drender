@@ -85,6 +85,53 @@ PYBIND11_MODULE(_asdiff_mesh, module) {
     module.def("has_instant_meshes_backend", &asdiff_mesh::has_instant_meshes_backend);
 
     module.def(
+        "remesh_field_aligned",
+        [](const py::array_t<float, py::array::c_style | py::array::forcecast>& positions,
+           const py::array_t<std::uint32_t, py::array::c_style | py::array::forcecast>& indices,
+           int vertex_count,
+           int face_count,
+           float scale,
+           int rosy,
+           int posy,
+           float crease_angle,
+           bool align_to_boundaries,
+           bool extrinsic,
+           int smooth_iterations,
+           bool deterministic) {
+            validate_positions(positions.request());
+            validate_indices(indices.request());
+            asdiff_mesh::RemeshOptions options;
+            options.vertex_count = vertex_count;
+            options.face_count = face_count;
+            options.scale = scale;
+            options.rosy = rosy;
+            options.posy = posy;
+            options.crease_angle = crease_angle;
+            options.align_to_boundaries = align_to_boundaries;
+            options.extrinsic = extrinsic;
+            options.smooth_iterations = smooth_iterations;
+            options.deterministic = deterministic;
+            auto mesh = asdiff_mesh::remesh_field_aligned(as_span(positions), as_span(indices), options);
+            return py::make_tuple(
+                vector_to_array(std::move(mesh.positions),
+                                {static_cast<py::ssize_t>(mesh.positions.size() / 3), 3}),
+                vector_to_u32_array(std::move(mesh.indices),
+                                    {static_cast<py::ssize_t>(mesh.indices.size() / 3), 3}));
+        },
+        py::arg("positions"),
+        py::arg("indices"),
+        py::arg("vertex_count") = -1,
+        py::arg("face_count") = -1,
+        py::arg("scale") = -1.0F,
+        py::arg("rosy") = 4,
+        py::arg("posy") = 4,
+        py::arg("crease_angle") = 0.0F,
+        py::arg("align_to_boundaries") = true,
+        py::arg("extrinsic") = true,
+        py::arg("smooth_iterations") = 2,
+        py::arg("deterministic") = true);
+
+    module.def(
         "repair_and_decimate",
         [](const py::array_t<float, py::array::c_style | py::array::forcecast>& positions,
            const py::array_t<std::uint32_t, py::array::c_style | py::array::forcecast>& indices,

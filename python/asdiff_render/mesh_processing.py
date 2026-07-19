@@ -12,12 +12,57 @@ import numpy as np
 from .baking import UnwrappedMesh, unwrap_mesh_uv
 
 try:
-    from ._asdiff_mesh import has_instant_meshes_backend, prepare_for_baking as _prepare_for_baking_cpp
+    from ._asdiff_mesh import has_instant_meshes_backend as _has_instant_meshes_backend
+    from ._asdiff_mesh import prepare_for_baking as _prepare_for_baking_cpp
+    from ._asdiff_mesh import remesh_field_aligned as _remesh_field_aligned_cpp
     from ._asdiff_mesh import repair_and_decimate as _repair_and_decimate_cpp
 except ImportError:
-    has_instant_meshes_backend = None
+    _has_instant_meshes_backend = None
     _prepare_for_baking_cpp = None
+    _remesh_field_aligned_cpp = None
     _repair_and_decimate_cpp = None
+
+
+def has_instant_meshes_backend() -> bool:
+    return bool(_has_instant_meshes_backend and _has_instant_meshes_backend())
+
+
+def remesh_field_aligned(
+    positions: np.ndarray,
+    indices: np.ndarray,
+    *,
+    vertex_count: int = -1,
+    face_count: int = -1,
+    scale: float = -1.0,
+    rosy: int = 4,
+    posy: int = 4,
+    crease_angle: float = 0.0,
+    align_to_boundaries: bool = True,
+    extrinsic: bool = True,
+    smooth_iterations: int = 2,
+    deterministic: bool = True,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Field-aligned remesh via Instant Meshes; output is always triangles."""
+
+    if _remesh_field_aligned_cpp is None or not has_instant_meshes_backend():
+        raise RuntimeError(
+            "Instant Meshes remeshing requires ASDIFF_BUILD_MESH_TOOLS=ON and "
+            "ASDIFF_ENABLE_INSTANT_MESHES=ON"
+        )
+    return _remesh_field_aligned_cpp(
+        np.ascontiguousarray(positions, dtype=np.float32),
+        np.ascontiguousarray(indices, dtype=np.uint32),
+        vertex_count,
+        face_count,
+        scale,
+        rosy,
+        posy,
+        crease_angle,
+        align_to_boundaries,
+        extrinsic,
+        smooth_iterations,
+        deterministic,
+    )
 
 
 MeshQuality = Literal["high", "medium", "low"]
@@ -123,48 +168,43 @@ def prepare_mesh_arrays_for_baking(
     if source_indices.ndim != 2 or source_indices.shape[1] != 3:
         raise ValueError("indices must have shape [triangle_count, 3]")
 
-    if options.use_instant_remesh and (
-        has_instant_meshes_backend is None or not has_instant_meshes_backend()
-    ):
-        # Fallback to Python Instant Meshes binding, then continue in C++ memory.
-        try:
-            import pynanoinstantmeshes
-        except ImportError as error:
-            raise ImportError(
-                "Instant Meshes remeshing requires ASDIFF_ENABLE_INSTANT_MESHES=ON "
-                "or pynanoinstantmeshes"
-            ) from error
-        if _repair_and_decimate_cpp is None:
-            raise RuntimeError(
-                "in-memory mesh ops require ASDIFF_BUILD_MESH_TOOLS=ON and a CGAL-enabled build"
-            )
+    if options.use_instant_remesh and not has_instant_meshes_backend():
+        raise RuntimeError(
+            "Instant Meshes remeshing requires ASDIFF_BUILD_MESH_TOOLS=ON and "
+            "ASDIFF_ENABLE_INSTANT_MESHES=ON"
+        )
+
+    if _prepare_for_baking_cpp is None:
+        raise RuntimeError(
+            "in-memory mesh ops require ASDIFF_BUILD_MESH_TOOLS=ON and a CGAL-enabled build"
+        )
+
+    # When Instant Meshes is requested, prefer the dedicated C++ remesh API so
+    # vertex/face targets from MeshPreparationOptions are honored before CGAL.
+    if options.use_instant_remesh:
+        if _remesh_field_aligned_cpp is None or _repair_and_decimate_cpp is None:
+            raise RuntimeError("Instant Meshes C++ backend is unavailable")
         instant_vertex_count = (
             max(4, (target_triangle_count + 7) // 8)
             if options.instant_vertex_count is None
             else options.instant_vertex_count
         )
         begin = time.perf_counter()
-        remeshed_positions, remeshed_faces = pynanoinstantmeshes.remesh(
+        remeshed_positions, remeshed_faces = _remesh_field_aligned_cpp(
             source_positions,
             source_indices,
-            vertex_count=instant_vertex_count,
-            rosy=options.rosy,
-            posy=options.posy,
-            align_to_boundaries=options.align_to_boundaries,
-            extrinsic=options.extrinsic,
-            smooth_iter=options.smooth_iterations,
-            deterministic=options.deterministic,
+            instant_vertex_count,
+            -1,
+            -1.0,
+            options.rosy,
+            options.posy,
+            0.0,
+            options.align_to_boundaries,
+            options.extrinsic,
+            options.smooth_iterations,
+            options.deterministic,
         )
         remesh_seconds = time.perf_counter() - begin
-        remeshed_positions = np.ascontiguousarray(remeshed_positions, dtype=np.float32)
-        remeshed_faces = np.ascontiguousarray(remeshed_faces, dtype=np.uint32)
-        if remeshed_faces.ndim == 2 and remeshed_faces.shape[1] == 4:
-            # Triangulate quads in memory.
-            a = remeshed_faces[:, 0]
-            b = remeshed_faces[:, 1]
-            c = remeshed_faces[:, 2]
-            d = remeshed_faces[:, 3]
-            remeshed_faces = np.stack([a, b, c, a, c, d], axis=1).reshape(-1, 3)
         begin = time.perf_counter()
         manifold_positions, manifold_indices = _repair_and_decimate_cpp(
             remeshed_positions, remeshed_faces, target_triangle_count, False
@@ -195,11 +235,6 @@ def prepare_mesh_arrays_for_baking(
             uv_atlas_seconds,
         )
 
-    if _prepare_for_baking_cpp is None:
-        raise RuntimeError(
-            "in-memory mesh ops require ASDIFF_BUILD_MESH_TOOLS=ON and a CGAL-enabled build"
-        )
-
     begin = time.perf_counter()
     (
         positions_out,
@@ -219,7 +254,7 @@ def prepare_mesh_arrays_for_baking(
         source_positions,
         source_indices,
         target_triangle_count,
-        options.use_instant_remesh,
+        False,
         options.atlas_resolution,
         options.atlas_gutter,
         options.atlas_max_stretch,
