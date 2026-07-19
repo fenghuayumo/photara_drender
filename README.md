@@ -4,8 +4,9 @@
 nvdiffrast 的张量语义，但不依赖 CUDA、OpenGL 上下文或厂商专有扩展。
 
 当前版本是可验证的 portable baseline：支持 tile-binned 三角形光栅化、透视正确重心坐标、像素导数、
-深度选择、面剔除、可微顶点属性插值，以及重心坐标损失到齐次裁剪空间顶点的解析反向传播。后端避免使用
-浮点原子，通过角点梯度、顶点邻接表和确定性归约保证不同 Vulkan 厂商上的可执行性。
+深度选择、可偏移 viewport、面剔除、可微顶点属性插值、可微双线性纹理采样，以及重心坐标损失到齐次
+裁剪空间顶点的解析反向传播。后端避免使用浮点原子，通过角点梯度、顶点/texel 邻接表和确定性归约保证
+不同 Vulkan 厂商上的可执行性。
 
 ## 输出约定
 
@@ -55,7 +56,7 @@ PyTorch 可通过 autograd 适配器直接训练；传入持久的 `Rasterizer` 
 
 ```python
 import torch
-from asdiff_render import Rasterizer, interpolate, rasterize
+from asdiff_render import Rasterizer, interpolate, rasterize, texture
 
 context = Rasterizer()
 positions = torch.tensor([
@@ -67,7 +68,9 @@ indices = torch.tensor([[0, 1, 2]], dtype=torch.int64)
 raster, raster_db = rasterize(positions, indices, (512, 512), rasterizer=context)
 colors = torch.eye(3, dtype=torch.float32, requires_grad=True)
 image = interpolate(colors, raster, indices, rasterizer=context)
-image.square().mean().backward()
+uv = interpolate(vertex_uv, raster, indices, rasterizer=context)
+image = texture(atlas, uv, raster, rasterizer=context, address_mode="clamp")
+image.square().mean().backward()  # atlas、vertex_uv 和 positions 均可获得梯度
 ```
 
 该适配器通过 host staging 避免绑定特定 PyTorch ABI，CPU/CUDA 张量均可使用；高性能零拷贝互操作仍属于后续后端。
@@ -78,4 +81,7 @@ image.square().mean().backward()
 - 当前要求三角形三个顶点的 `w > 0`，尚未实现跨近裁剪面的齐次裁剪。
 - 反向传播覆盖 `u/v`，与 nvdiffrast 一样不对离散 triangle id 求导；像素导数的二阶反传尚未开放。
 - Python 提供 NumPy 原生绑定和 PyTorch autograd 适配器；Vulkan/CUDA/CPU 外部内存零拷贝互操作属于下一阶段。
-- 顶点属性插值已包含前向、属性梯度与重心坐标梯度；纹理采样和轮廓抗锯齿会继续作为独立可微算子加入。
+- 顶点属性插值与 level-0 双线性纹理采样已包含完整一阶梯度；mipmap 与轮廓抗锯齿会继续作为独立模块加入。
+
+多视图 texture atlas 优化可直接使用 `render_textured_mesh()` 和 `optimize_texture_atlas()`，详见
+[纹理 atlas 指南](docs/texture_atlas.md)。

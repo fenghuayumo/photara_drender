@@ -15,6 +15,9 @@
 #include "rasterize_backward.hlsl.embedded.hpp"
 #include "rasterize_forward.hlsl.embedded.hpp"
 #include "reduce_vertex_gradients.hlsl.embedded.hpp"
+#include "texture_forward.hlsl.embedded.hpp"
+#include "texture_grad_texture.hlsl.embedded.hpp"
+#include "texture_grad_uv.hlsl.embedded.hpp"
 
 namespace asdiff_render {
 namespace {
@@ -89,6 +92,15 @@ std::span<const std::byte> embedded_shader(const std::string& shader_name) {
     }
     if (shader_name == "interpolate_grad_raster.hlsl.spv") {
         return std::as_bytes(std::span{interpolate_grad_raster_hlsl_spv});
+    }
+    if (shader_name == "texture_forward.hlsl.spv") {
+        return std::as_bytes(std::span{texture_forward_hlsl_spv});
+    }
+    if (shader_name == "texture_grad_texture.hlsl.spv") {
+        return std::as_bytes(std::span{texture_grad_texture_hlsl_spv});
+    }
+    if (shader_name == "texture_grad_uv.hlsl.spv") {
+        return std::as_bytes(std::span{texture_grad_uv_hlsl_spv});
     }
     throw std::invalid_argument("Unknown embedded shader: " + shader_name);
 }

@@ -8,6 +8,7 @@ struct PushConstants
     uint output_derivatives;
     uint tile_count_x;
     uint tile_size;
+    float4 viewport;
 };
 
 [[vk::binding(0, 0)]] StructuredBuffer<float4> positions;
@@ -52,8 +53,8 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
 
     const uint pixel_index = pixel.y * push_constants.width + pixel.x;
     const float2 sample_ndc = float2(
-        (float(pixel.x) + 0.5f) * 2.0f / float(push_constants.width) - 1.0f,
-        (float(pixel.y) + 0.5f) * 2.0f / float(push_constants.height) - 1.0f);
+        (float(pixel.x) - push_constants.viewport.x + 0.5f) * 2.0f / push_constants.viewport.z - 1.0f,
+        (float(pixel.y) - push_constants.viewport.y + 0.5f) * 2.0f / push_constants.viewport.w - 1.0f);
     float best_depth = 3.402823466e+38f;
     uint best_triangle = 0;
     float2 best_barycentric = 0.0f;
@@ -153,10 +154,10 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
             const float d_area_dy = da0_dy + da1_dy + da2_dy;
             const float2 d_bc_dx = float2(
                 da0_dx - barycentric.x * d_area_dx,
-                da1_dx - barycentric.y * d_area_dx) * inverse_area * 2.0f / float(push_constants.width);
+                da1_dx - barycentric.y * d_area_dx) * inverse_area * 2.0f / push_constants.viewport.z;
             const float2 d_bc_dy = float2(
                 da0_dy - barycentric.x * d_area_dy,
-                da1_dy - barycentric.y * d_area_dy) * inverse_area * 2.0f / float(push_constants.height);
+                da1_dy - barycentric.y * d_area_dy) * inverse_area * 2.0f / push_constants.viewport.w;
             best_derivatives = float4(d_bc_dx.x, d_bc_dy.x, d_bc_dx.y, d_bc_dy.y);
         }
     }

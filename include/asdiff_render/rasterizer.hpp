@@ -44,6 +44,19 @@ public:
         const RasterizeOutput& raster_output,
         std::span<const float> grad_interpolated);
 
+    [[nodiscard]] TextureOutput texture_forward(
+        std::span<const float> texture,
+        const TextureDesc& texture_desc,
+        std::span<const float> uv,
+        const RasterizeOutput& raster_output);
+
+    [[nodiscard]] TextureGradients texture_backward(
+        std::span<const float> texture,
+        const TextureDesc& texture_desc,
+        std::span<const float> uv,
+        const RasterizeOutput& raster_output,
+        std::span<const float> grad_sampled);
+
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;

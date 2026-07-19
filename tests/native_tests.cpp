@@ -78,6 +78,81 @@ int main() {
         require(std::ranges::all_of(interpolation_gradients.attributes, [](float value) { return std::isfinite(value); }),
                 "Attribute gradient contains non-finite values");
 
+        const std::vector<float> vertex_uv{
+            0.20F, 0.20F,
+            0.80F, 0.20F,
+            0.50F, 0.80F,
+        };
+        const auto interpolated_uv = rasterizer.interpolate_forward(vertex_uv, 2, indices, output);
+        std::vector<float> texture(4 * 4 * 2);
+        for (std::uint32_t y = 0; y < 4; ++y) {
+            for (std::uint32_t x = 0; x < 4; ++x) {
+                texture[(y * 4 + x) * 2 + 0] = static_cast<float>(x + y * 2);
+                texture[(y * 4 + x) * 2 + 1] = static_cast<float>(static_cast<std::int32_t>(x * 3) - static_cast<std::int32_t>(y));
+            }
+        }
+        const asdiff_render::TextureDesc texture_desc{4, 4, 2, asdiff_render::AddressMode::clamp};
+        const auto sampled = rasterizer.texture_forward(texture, texture_desc, interpolated_uv.values, output);
+        require(sampled.values.size() == 32 * 32 * 2, "Unexpected texture sample output size");
+        std::vector<float> grad_sampled(sampled.values.size(), 0.0F);
+        std::size_t covered_pixel = 0;
+        while (covered_pixel < output.raster.size() / 4 && output.raster[covered_pixel * 4 + 3] == 0.0F) {
+            ++covered_pixel;
+        }
+        require(covered_pixel < output.raster.size() / 4, "No covered pixel found for texture gradient test");
+        grad_sampled[covered_pixel * 2] = 1.0F;
+        const auto texture_gradients =
+            rasterizer.texture_backward(texture, texture_desc, interpolated_uv.values, output, grad_sampled);
+        require(texture_gradients.texture.size() == texture.size(), "Unexpected texture gradient size");
+        require(texture_gradients.uv.size() == interpolated_uv.values.size(), "Unexpected UV gradient size");
+
+        auto positive_uv = interpolated_uv.values;
+        auto negative_uv = interpolated_uv.values;
+        positive_uv[covered_pixel * 2] += epsilon;
+        negative_uv[covered_pixel * 2] -= epsilon;
+        const auto positive_sample = rasterizer.texture_forward(texture, texture_desc, positive_uv, output);
+        const auto negative_sample = rasterizer.texture_forward(texture, texture_desc, negative_uv, output);
+        const float numerical_uv_gradient =
+            (positive_sample.values[covered_pixel * 2] - negative_sample.values[covered_pixel * 2]) / (2.0F * epsilon);
+        require(std::abs(texture_gradients.uv[covered_pixel * 2] - numerical_uv_gradient) < 1e-3F,
+                "Analytical UV gradient failed finite-difference validation");
+
+        std::size_t gradient_texel = 0;
+        while (gradient_texel < texture_gradients.texture.size() &&
+               std::abs(texture_gradients.texture[gradient_texel]) < 1e-8F) {
+            ++gradient_texel;
+        }
+        require(gradient_texel < texture_gradients.texture.size(), "No texture gradient contribution was generated");
+        auto positive_texture = texture;
+        auto negative_texture = texture;
+        positive_texture[gradient_texel] += epsilon;
+        negative_texture[gradient_texel] -= epsilon;
+        const auto positive_texture_sample =
+            rasterizer.texture_forward(positive_texture, texture_desc, interpolated_uv.values, output);
+        const auto negative_texture_sample =
+            rasterizer.texture_forward(negative_texture, texture_desc, interpolated_uv.values, output);
+        const float numerical_texture_gradient =
+            (positive_texture_sample.values[covered_pixel * 2] - negative_texture_sample.values[covered_pixel * 2]) /
+            (2.0F * epsilon);
+        require(std::abs(texture_gradients.texture[gradient_texel] - numerical_texture_gradient) < 1e-3F,
+                "Analytical texture gradient failed finite-difference validation");
+
+        auto viewport_options = options;
+        viewport_options.viewport = asdiff_render::Viewport{8.0F, 4.0F, 16.0F, 20.0F};
+        const auto viewport_output = rasterizer.forward(positions, indices, viewport_options);
+        for (std::uint32_t y = 0; y < viewport_output.height; ++y) {
+            for (std::uint32_t x = 0; x < viewport_output.width; ++x) {
+                const bool outside_viewport = x < 8 || x >= 24 || y < 4 || y >= 24;
+                if (outside_viewport) {
+                    require(viewport_output.raster[(y * viewport_output.width + x) * 4 + 3] == 0.0F,
+                            "Viewport rasterization wrote outside the viewport");
+                }
+            }
+        }
+        const auto viewport_gradient = rasterizer.backward(positions, indices, viewport_output, grad_raster);
+        require(std::ranges::all_of(viewport_gradient, [](float value) { return std::isfinite(value); }),
+                "Viewport position gradient contains non-finite values");
+
         std::cout << "device=" << context.device_info().name << '\n';
         std::cout << "finite_difference=" << numerical_gradient
                   << " analytical=" << analytical_gradient[0] << '\n';

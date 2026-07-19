@@ -33,6 +33,33 @@ def main() -> None:
     assert grad_interpolation_raster.shape == raster.shape
     assert np.isfinite(grad_attributes).all()
 
+    uv_attributes = np.array([[0.2, 0.2], [0.8, 0.2], [0.5, 0.8]], dtype=np.float32)
+    uv = rasterizer.interpolate_forward(uv_attributes, indices, raster)
+    texture_values = np.arange(4 * 4 * 3, dtype=np.float32).reshape(4, 4, 3) / 48.0
+    sampled = rasterizer.texture_forward(texture_values, uv, raster)
+    assert sampled.shape == (16, 20, 3)
+    grad_texture, grad_uv = rasterizer.texture_backward(
+        texture_values,
+        uv,
+        raster,
+        np.ones_like(sampled),
+    )
+    assert grad_texture.shape == texture_values.shape
+    assert grad_uv.shape == uv.shape
+    assert np.isfinite(grad_texture).all() and np.isfinite(grad_uv).all()
+    for address_mode in ("wrap", "mirror"):
+        addressed = rasterizer.texture_forward(texture_values, uv + 1.25, raster, address_mode)
+        assert np.isfinite(addressed).all()
+
+    viewport_raster, _ = rasterizer.forward(
+        positions,
+        indices,
+        (20, 24),
+        viewport=(4.0, 3.0, 16.0, 12.0),
+    )
+    assert np.count_nonzero(viewport_raster[:3, ..., 3]) == 0
+    assert np.count_nonzero(viewport_raster[15:, ..., 3]) == 0
+
     if asdiff_render.rasterize is not None:
         import torch
 
@@ -51,11 +78,64 @@ def main() -> None:
             torch_indices,
             rasterizer=rasterizer,
         )
-        torch_image[..., 0].sum().backward()
+        torch_uv_attributes = torch.tensor(uv_attributes, requires_grad=True)
+        torch_uv = asdiff_render.interpolate(
+            torch_uv_attributes,
+            torch_raster,
+            torch_indices,
+            rasterizer=rasterizer,
+        )
+        torch_texture = torch.tensor(texture_values, requires_grad=True)
+        torch_sampled = asdiff_render.texture(
+            torch_texture,
+            torch_uv,
+            torch_raster,
+            rasterizer=rasterizer,
+        )
+        (torch_image[..., 0].sum() + torch_sampled.square().sum()).backward()
         assert torch_positions.grad is not None
         assert torch.isfinite(torch_positions.grad).all()
         assert torch_attributes.grad is not None
         assert torch.isfinite(torch_attributes.grad).all()
+        assert torch_uv_attributes.grad is not None
+        assert torch.isfinite(torch_uv_attributes.grad).all()
+        assert torch_texture.grad is not None
+        assert torch.isfinite(torch_texture.grad).all()
+
+        high_level_render = asdiff_render.render_textured_mesh(
+            torch_positions.detach(),
+            torch_indices,
+            torch_uv_attributes.detach(),
+            torch_texture.detach(),
+            (16, 20),
+            rasterizer=rasterizer,
+        )
+        assert high_level_render.image.shape == (16, 20, 3)
+        robust_loss = asdiff_render.masked_charbonnier_loss(
+            high_level_render.image,
+            torch_sampled.detach(),
+            high_level_render.valid_mask,
+        )
+        assert torch.isfinite(robust_loss)
+        assert torch.isfinite(asdiff_render.atlas_total_variation(torch_texture.detach()))
+
+        options = asdiff_render.AtlasOptimizationOptions(
+            steps=2,
+            learning_rate=1e-2,
+            total_variation_weight=0.0,
+            seam_weight=0.0,
+        )
+        optimized_texture, history = asdiff_render.optimize_texture_atlas(
+            torch_texture.detach() * 0.9,
+            torch_positions.detach()[None],
+            torch_indices,
+            torch_uv_attributes.detach(),
+            [torch_sampled.detach()],
+            rasterizer=rasterizer,
+            options=options,
+        )
+        assert optimized_texture.shape == torch_texture.shape
+        assert len(history) == 2 and np.isfinite(history).all()
 
 
 if __name__ == "__main__":

@@ -45,11 +45,25 @@ struct TileBins {
     std::vector<std::uint32_t> triangle_indices;
 };
 
+Viewport resolve_viewport(
+    std::uint32_t output_width,
+    std::uint32_t output_height,
+    const std::optional<Viewport>& requested_viewport) {
+    const Viewport viewport = requested_viewport.value_or(
+        Viewport{0.0F, 0.0F, static_cast<float>(output_width), static_cast<float>(output_height)});
+    if (!std::isfinite(viewport.x) || !std::isfinite(viewport.y) || !std::isfinite(viewport.width) ||
+        !std::isfinite(viewport.height) || viewport.width <= 0.0F || viewport.height <= 0.0F) {
+        throw std::invalid_argument("viewport must contain finite values and positive dimensions");
+    }
+    return viewport;
+}
+
 TileBins build_tile_bins(
     std::span<const float> positions,
     std::span<const std::uint32_t> indices,
     std::uint32_t width,
-    std::uint32_t height) {
+    std::uint32_t height,
+    const Viewport& viewport) {
     TileBins result;
     result.tile_count_x = divide_round_up(width, RASTER_TILE_SIZE);
     const auto tile_count_y = divide_round_up(height, RASTER_TILE_SIZE);
@@ -85,19 +99,19 @@ TileBins build_tile_bins(
         }
 
         const auto pixel_min_x = std::clamp(
-            static_cast<std::int32_t>(std::floor((min_x * 0.5F + 0.5F) * width)),
+            static_cast<std::int32_t>(std::floor((min_x * 0.5F + 0.5F) * viewport.width + viewport.x)),
             0,
             static_cast<std::int32_t>(width - 1));
         const auto pixel_max_x = std::clamp(
-            static_cast<std::int32_t>(std::ceil((max_x * 0.5F + 0.5F) * width)) - 1,
+            static_cast<std::int32_t>(std::ceil((max_x * 0.5F + 0.5F) * viewport.width + viewport.x)) - 1,
             0,
             static_cast<std::int32_t>(width - 1));
         const auto pixel_min_y = std::clamp(
-            static_cast<std::int32_t>(std::floor((min_y * 0.5F + 0.5F) * height)),
+            static_cast<std::int32_t>(std::floor((min_y * 0.5F + 0.5F) * viewport.height + viewport.y)),
             0,
             static_cast<std::int32_t>(height - 1));
         const auto pixel_max_y = std::clamp(
-            static_cast<std::int32_t>(std::ceil((max_y * 0.5F + 0.5F) * height)) - 1,
+            static_cast<std::int32_t>(std::ceil((max_y * 0.5F + 0.5F) * viewport.height + viewport.y)) - 1,
             0,
             static_cast<std::int32_t>(height - 1));
         for (std::uint32_t tile_y = static_cast<std::uint32_t>(pixel_min_y) / RASTER_TILE_SIZE;
@@ -147,6 +161,133 @@ VertexAdjacency build_vertex_adjacency(
     return result;
 }
 
+std::int32_t address_coordinate(std::int32_t coordinate, std::uint32_t size, AddressMode address_mode) {
+    const auto signed_size = static_cast<std::int32_t>(size);
+    if (address_mode == AddressMode::clamp) {
+        return std::clamp(coordinate, 0, signed_size - 1);
+    }
+    if (address_mode == AddressMode::wrap) {
+        const auto remainder = coordinate % signed_size;
+        return remainder < 0 ? remainder + signed_size : remainder;
+    }
+    const auto period = signed_size * 2;
+    auto mirrored = coordinate % period;
+    if (mirrored < 0) {
+        mirrored += period;
+    }
+    return mirrored < signed_size ? mirrored : period - 1 - mirrored;
+}
+
+struct TextureSampleAdjacency {
+    std::vector<std::uint32_t> texel_offsets;
+    std::vector<std::uint32_t> sample_entries;
+    std::vector<float> sample_weights;
+};
+
+TextureSampleAdjacency build_texture_sample_adjacency(
+    std::span<const float> uv,
+    const RasterizeOutput& raster_output,
+    const TextureDesc& texture_desc) {
+    const auto pixel_count = static_cast<std::size_t>(raster_output.width) * raster_output.height;
+    const auto texel_count = static_cast<std::size_t>(texture_desc.width) * texture_desc.height;
+    TextureSampleAdjacency result;
+    result.texel_offsets.assign(texel_count + 1, 0);
+    result.sample_weights.assign(pixel_count * 4, 0.0F);
+    std::vector<std::uint32_t> sample_texels(pixel_count * 4, 0);
+    std::size_t valid_entry_count = 0;
+    for (std::size_t pixel_index = 0; pixel_index < pixel_count; ++pixel_index) {
+        if (raster_output.raster[pixel_index * 4 + 3] == 0.0F) {
+            continue;
+        }
+        const float u = uv[pixel_index * 2 + 0];
+        const float v = uv[pixel_index * 2 + 1];
+        if (!std::isfinite(u) || !std::isfinite(v)) {
+            throw std::invalid_argument("uv contains a non-finite value in a covered pixel");
+        }
+        const double texel_x = static_cast<double>(u) * texture_desc.width - 0.5;
+        const double texel_y = static_cast<double>(v) * texture_desc.height - 0.5;
+        if (std::abs(texel_x) > 1.0e9 || std::abs(texel_y) > 1.0e9) {
+            throw std::out_of_range("uv is too large for portable texture addressing");
+        }
+        const auto base_x = static_cast<std::int32_t>(std::floor(texel_x));
+        const auto base_y = static_cast<std::int32_t>(std::floor(texel_y));
+        const float fraction_x = static_cast<float>(texel_x - std::floor(texel_x));
+        const float fraction_y = static_cast<float>(texel_y - std::floor(texel_y));
+        const std::int32_t x[2] = {
+            address_coordinate(base_x, texture_desc.width, texture_desc.address_mode),
+            address_coordinate(base_x + 1, texture_desc.width, texture_desc.address_mode),
+        };
+        const std::int32_t y[2] = {
+            address_coordinate(base_y, texture_desc.height, texture_desc.address_mode),
+            address_coordinate(base_y + 1, texture_desc.height, texture_desc.address_mode),
+        };
+        const float weights[4] = {
+            (1.0F - fraction_x) * (1.0F - fraction_y),
+            fraction_x * (1.0F - fraction_y),
+            (1.0F - fraction_x) * fraction_y,
+            fraction_x * fraction_y,
+        };
+        const std::uint32_t texels[4] = {
+            static_cast<std::uint32_t>(y[0]) * texture_desc.width + static_cast<std::uint32_t>(x[0]),
+            static_cast<std::uint32_t>(y[0]) * texture_desc.width + static_cast<std::uint32_t>(x[1]),
+            static_cast<std::uint32_t>(y[1]) * texture_desc.width + static_cast<std::uint32_t>(x[0]),
+            static_cast<std::uint32_t>(y[1]) * texture_desc.width + static_cast<std::uint32_t>(x[1]),
+        };
+        for (std::uint32_t corner = 0; corner < 4; ++corner) {
+            const auto sample_entry = pixel_index * 4 + corner;
+            result.sample_weights[sample_entry] = weights[corner];
+            sample_texels[sample_entry] = texels[corner];
+            ++result.texel_offsets[texels[corner] + 1];
+            ++valid_entry_count;
+        }
+    }
+    for (std::size_t texel_index = 1; texel_index <= texel_count; ++texel_index) {
+        result.texel_offsets[texel_index] += result.texel_offsets[texel_index - 1];
+    }
+    result.sample_entries.resize(valid_entry_count);
+    auto cursors = result.texel_offsets;
+    for (std::size_t sample_entry = 0; sample_entry < sample_texels.size(); ++sample_entry) {
+        const auto pixel_index = sample_entry / 4;
+        if (raster_output.raster[pixel_index * 4 + 3] == 0.0F) {
+            continue;
+        }
+        const auto texel_index = sample_texels[sample_entry];
+        result.sample_entries[cursors[texel_index]++] = static_cast<std::uint32_t>(sample_entry);
+    }
+    return result;
+}
+
+void validate_texture_inputs(
+    std::span<const float> texture,
+    const TextureDesc& texture_desc,
+    std::span<const float> uv,
+    const RasterizeOutput& raster_output) {
+    if (texture_desc.width == 0 || texture_desc.height == 0 || texture_desc.channel_count == 0) {
+        throw std::invalid_argument("Texture width, height, and channel_count must be positive");
+    }
+    if (texture_desc.width > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max() / 2) ||
+        texture_desc.height > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max() / 2)) {
+        throw std::out_of_range("Texture dimensions exceed portable addressing limits");
+    }
+    const auto texture_value_count = static_cast<std::size_t>(texture_desc.width) * texture_desc.height *
+                                     texture_desc.channel_count;
+    if (texture.size() != texture_value_count) {
+        throw std::invalid_argument("texture must have shape [texture_height, texture_width, channel_count]");
+    }
+    const auto pixel_count = static_cast<std::size_t>(raster_output.width) * raster_output.height;
+    if (raster_output.width == 0 || raster_output.height == 0 || raster_output.raster.size() != pixel_count * 4) {
+        throw std::invalid_argument("raster_output has inconsistent dimensions");
+    }
+    if (uv.size() != pixel_count * 2) {
+        throw std::invalid_argument("uv must have shape [image_height, image_width, 2]");
+    }
+    if (pixel_count > std::numeric_limits<std::uint32_t>::max() ||
+        static_cast<std::size_t>(texture_desc.width) * texture_desc.height >
+            std::numeric_limits<std::uint32_t>::max()) {
+        throw std::overflow_error("Texture operation exceeds backend element limits");
+    }
+}
+
 } // namespace
 
 class Rasterizer::Impl {
@@ -161,7 +302,11 @@ public:
           interpolate_grad_attributes_pipeline_(
               context.create_pipeline("interpolate_grad_attributes.hlsl.spv", 4, sizeof(InterpolatePushConstants))),
           interpolate_grad_raster_pipeline_(
-              context.create_pipeline("interpolate_grad_raster.hlsl.spv", 5, sizeof(InterpolatePushConstants))) {}
+              context.create_pipeline("interpolate_grad_raster.hlsl.spv", 5, sizeof(InterpolatePushConstants))),
+          texture_forward_pipeline_(context.create_pipeline("texture_forward.hlsl.spv", 4, sizeof(TexturePushConstants))),
+          texture_grad_texture_pipeline_(
+              context.create_pipeline("texture_grad_texture.hlsl.spv", 5, sizeof(TextureGradTexturePushConstants))),
+          texture_grad_uv_pipeline_(context.create_pipeline("texture_grad_uv.hlsl.spv", 5, sizeof(TexturePushConstants))) {}
 
     struct ForwardPushConstants {
         std::uint32_t vertex_count;
@@ -172,6 +317,7 @@ public:
         std::uint32_t output_derivatives;
         std::uint32_t tile_count_x;
         std::uint32_t tile_size;
+        float viewport[4];
     };
 
     struct BackwardPushConstants {
@@ -179,6 +325,7 @@ public:
         std::uint32_t triangle_count;
         std::uint32_t width;
         std::uint32_t height;
+        float viewport[4];
     };
 
     struct ReducePushConstants {
@@ -192,6 +339,20 @@ public:
         std::uint32_t attribute_count;
     };
 
+    struct TexturePushConstants {
+        std::uint32_t pixel_count;
+        std::uint32_t texture_width;
+        std::uint32_t texture_height;
+        std::uint32_t channel_count;
+        std::uint32_t address_mode;
+    };
+
+    struct TextureGradTexturePushConstants {
+        std::uint32_t texel_count;
+        std::uint32_t pixel_count;
+        std::uint32_t channel_count;
+    };
+
     Context::Impl& context_;
     ComputePipeline forward_pipeline_;
     ComputePipeline backward_pipeline_;
@@ -199,6 +360,9 @@ public:
     ComputePipeline interpolate_forward_pipeline_;
     ComputePipeline interpolate_grad_attributes_pipeline_;
     ComputePipeline interpolate_grad_raster_pipeline_;
+    ComputePipeline texture_forward_pipeline_;
+    ComputePipeline texture_grad_texture_pipeline_;
+    ComputePipeline texture_grad_uv_pipeline_;
 };
 
 Rasterizer::Rasterizer(Context& context) : impl_(std::make_unique<Impl>(*context.impl_)) {}
@@ -222,7 +386,8 @@ RasterizeOutput Rasterizer::forward(
     const auto position_bytes = clip_positions.size_bytes();
     const auto index_bytes = triangle_indices.size_bytes();
     const auto output_bytes = pixel_count * 4 * sizeof(float);
-    const auto tile_bins = build_tile_bins(clip_positions, triangle_indices, options.width, options.height);
+    const auto viewport = resolve_viewport(options.width, options.height, options.viewport);
+    const auto tile_bins = build_tile_bins(clip_positions, triangle_indices, options.width, options.height, viewport);
     const auto tile_offset_bytes = tile_bins.offsets.size() * sizeof(std::uint32_t);
     const auto tile_triangle_bytes = tile_bins.triangle_indices.size() * sizeof(std::uint32_t);
     auto position_buffer = impl_->context_.create_buffer(position_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
@@ -245,6 +410,7 @@ RasterizeOutput Rasterizer::forward(
         options.output_barycentric_derivatives ? 1U : 0U,
         tile_bins.tile_count_x,
         RASTER_TILE_SIZE,
+        {viewport.x, viewport.y, viewport.width, viewport.height},
     };
     const std::vector<VkDescriptorBufferInfo> descriptors{
         descriptor(position_buffer),
@@ -271,6 +437,7 @@ RasterizeOutput Rasterizer::forward(
         result.barycentric_derivatives.resize(pixel_count * 4);
         derivative_buffer.download(result.barycentric_derivatives.data(), output_bytes);
     }
+    result.viewport = viewport;
     return result;
 }
 
@@ -301,6 +468,10 @@ std::vector<float> Rasterizer::backward(
     const auto raster_bytes = forward_output.raster.size() * sizeof(float);
     const auto corner_gradient_bytes = triangle_indices.size() * 4 * sizeof(float);
     const auto vertex_gradient_bytes = clip_positions.size_bytes();
+    const auto viewport = resolve_viewport(
+        forward_output.width,
+        forward_output.height,
+        forward_output.viewport.width > 0.0F ? std::optional<Viewport>(forward_output.viewport) : std::nullopt);
     auto position_buffer = impl_->context_.create_buffer(position_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     auto index_buffer = impl_->context_.create_buffer(index_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     auto raster_buffer = impl_->context_.create_buffer(raster_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
@@ -327,6 +498,7 @@ std::vector<float> Rasterizer::backward(
         triangle_count,
         forward_output.width,
         forward_output.height,
+        {viewport.x, viewport.y, viewport.width, viewport.height},
     };
     const std::vector<VkDescriptorBufferInfo> backward_descriptors{
         descriptor(position_buffer),
@@ -507,6 +679,150 @@ InterpolateGradients Rasterizer::interpolate_backward(
     result.raster.resize(raster_output.raster.size());
     attribute_gradient_buffer.download(result.attributes.data(), attribute_bytes);
     raster_gradient_buffer.download(result.raster.data(), raster_bytes);
+    return result;
+}
+
+TextureOutput Rasterizer::texture_forward(
+    std::span<const float> texture,
+    const TextureDesc& texture_desc,
+    std::span<const float> uv,
+    const RasterizeOutput& raster_output) {
+    validate_texture_inputs(texture, texture_desc, uv, raster_output);
+    const auto pixel_count = static_cast<std::size_t>(raster_output.width) * raster_output.height;
+    const auto output_value_count = pixel_count * texture_desc.channel_count;
+    if (output_value_count > std::numeric_limits<std::uint32_t>::max()) {
+        throw std::overflow_error("Sampled texture output exceeds backend element limits");
+    }
+    const auto texture_bytes = texture.size_bytes();
+    const auto uv_bytes = uv.size_bytes();
+    const auto raster_bytes = raster_output.raster.size() * sizeof(float);
+    const auto output_bytes = output_value_count * sizeof(float);
+    auto texture_buffer = impl_->context_.create_buffer(texture_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    auto uv_buffer = impl_->context_.create_buffer(uv_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    auto raster_buffer = impl_->context_.create_buffer(raster_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    auto output_buffer = impl_->context_.create_buffer(output_bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    texture_buffer.upload(texture.data(), texture_bytes);
+    uv_buffer.upload(uv.data(), uv_bytes);
+    raster_buffer.upload(raster_output.raster.data(), raster_bytes);
+
+    const Impl::TexturePushConstants push_constants{
+        static_cast<std::uint32_t>(pixel_count),
+        texture_desc.width,
+        texture_desc.height,
+        texture_desc.channel_count,
+        static_cast<std::uint32_t>(texture_desc.address_mode),
+    };
+    const std::vector<VkDescriptorBufferInfo> descriptors{
+        descriptor(texture_buffer),
+        descriptor(uv_buffer),
+        descriptor(raster_buffer),
+        descriptor(output_buffer),
+    };
+    impl_->context_.dispatch(
+        impl_->texture_forward_pipeline_,
+        descriptors,
+        &push_constants,
+        sizeof(push_constants),
+        divide_round_up(static_cast<std::uint32_t>(output_value_count), BACKWARD_BLOCK_SIZE));
+
+    TextureOutput result;
+    result.width = raster_output.width;
+    result.height = raster_output.height;
+    result.channel_count = texture_desc.channel_count;
+    result.values.resize(output_value_count);
+    output_buffer.download(result.values.data(), output_bytes);
+    return result;
+}
+
+TextureGradients Rasterizer::texture_backward(
+    std::span<const float> texture,
+    const TextureDesc& texture_desc,
+    std::span<const float> uv,
+    const RasterizeOutput& raster_output,
+    std::span<const float> grad_sampled) {
+    validate_texture_inputs(texture, texture_desc, uv, raster_output);
+    const auto pixel_count = static_cast<std::size_t>(raster_output.width) * raster_output.height;
+    const auto texel_count = static_cast<std::size_t>(texture_desc.width) * texture_desc.height;
+    const auto sampled_value_count = pixel_count * texture_desc.channel_count;
+    if (grad_sampled.size() != sampled_value_count) {
+        throw std::invalid_argument("grad_sampled must have shape [image_height, image_width, channel_count]");
+    }
+    if (sampled_value_count > std::numeric_limits<std::uint32_t>::max() ||
+        texture.size() > std::numeric_limits<std::uint32_t>::max() ||
+        pixel_count > std::numeric_limits<std::uint32_t>::max() / 4) {
+        throw std::overflow_error("Texture gradient operation exceeds backend element limits");
+    }
+
+    const auto adjacency = build_texture_sample_adjacency(uv, raster_output, texture_desc);
+    const auto texture_bytes = texture.size_bytes();
+    const auto uv_bytes = uv.size_bytes();
+    const auto raster_bytes = raster_output.raster.size() * sizeof(float);
+    const auto grad_sampled_bytes = grad_sampled.size_bytes();
+    const auto texel_offset_bytes = adjacency.texel_offsets.size() * sizeof(std::uint32_t);
+    const auto sample_entry_bytes = adjacency.sample_entries.size() * sizeof(std::uint32_t);
+    const auto sample_weight_bytes = adjacency.sample_weights.size() * sizeof(float);
+    auto texture_buffer = impl_->context_.create_buffer(texture_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    auto uv_buffer = impl_->context_.create_buffer(uv_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    auto raster_buffer = impl_->context_.create_buffer(raster_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    auto grad_sampled_buffer = impl_->context_.create_buffer(grad_sampled_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    auto texel_offset_buffer = impl_->context_.create_buffer(texel_offset_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    auto sample_entry_buffer = impl_->context_.create_buffer(sample_entry_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    auto sample_weight_buffer = impl_->context_.create_buffer(sample_weight_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    auto grad_texture_buffer = impl_->context_.create_buffer(texture_bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    auto grad_uv_buffer = impl_->context_.create_buffer(uv_bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    texture_buffer.upload(texture.data(), texture_bytes);
+    uv_buffer.upload(uv.data(), uv_bytes);
+    raster_buffer.upload(raster_output.raster.data(), raster_bytes);
+    grad_sampled_buffer.upload(grad_sampled.data(), grad_sampled_bytes);
+    texel_offset_buffer.upload(adjacency.texel_offsets.data(), texel_offset_bytes);
+    sample_entry_buffer.upload(adjacency.sample_entries.data(), sample_entry_bytes);
+    sample_weight_buffer.upload(adjacency.sample_weights.data(), sample_weight_bytes);
+
+    const Impl::TextureGradTexturePushConstants grad_texture_push_constants{
+        static_cast<std::uint32_t>(texel_count),
+        static_cast<std::uint32_t>(pixel_count),
+        texture_desc.channel_count,
+    };
+    const std::vector<VkDescriptorBufferInfo> grad_texture_descriptors{
+        descriptor(grad_sampled_buffer),
+        descriptor(texel_offset_buffer),
+        descriptor(sample_entry_buffer),
+        descriptor(sample_weight_buffer),
+        descriptor(grad_texture_buffer),
+    };
+    impl_->context_.dispatch(
+        impl_->texture_grad_texture_pipeline_,
+        grad_texture_descriptors,
+        &grad_texture_push_constants,
+        sizeof(grad_texture_push_constants),
+        divide_round_up(static_cast<std::uint32_t>(texture.size()), BACKWARD_BLOCK_SIZE));
+
+    const Impl::TexturePushConstants grad_uv_push_constants{
+        static_cast<std::uint32_t>(pixel_count),
+        texture_desc.width,
+        texture_desc.height,
+        texture_desc.channel_count,
+        static_cast<std::uint32_t>(texture_desc.address_mode),
+    };
+    const std::vector<VkDescriptorBufferInfo> grad_uv_descriptors{
+        descriptor(texture_buffer),
+        descriptor(uv_buffer),
+        descriptor(raster_buffer),
+        descriptor(grad_sampled_buffer),
+        descriptor(grad_uv_buffer),
+    };
+    impl_->context_.dispatch(
+        impl_->texture_grad_uv_pipeline_,
+        grad_uv_descriptors,
+        &grad_uv_push_constants,
+        sizeof(grad_uv_push_constants),
+        divide_round_up(static_cast<std::uint32_t>(pixel_count), BACKWARD_BLOCK_SIZE));
+
+    TextureGradients result;
+    result.texture.resize(texture.size());
+    result.uv.resize(uv.size());
+    grad_texture_buffer.download(result.texture.data(), texture_bytes);
+    grad_uv_buffer.download(result.uv.data(), uv_bytes);
     return result;
 }
 

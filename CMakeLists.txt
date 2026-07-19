@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(asdiff_render VERSION 0.1.0 LANGUAGES CXX)
+project(asdiff_render VERSION 0.2.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -26,7 +26,10 @@ set(ASDIFF_SHADER_SOURCES
     shaders/reduce_vertex_gradients.hlsl
     shaders/interpolate_forward.hlsl
     shaders/interpolate_grad_attributes.hlsl
-    shaders/interpolate_grad_raster.hlsl)
+    shaders/interpolate_grad_raster.hlsl
+    shaders/texture_forward.hlsl
+    shaders/texture_grad_texture.hlsl
+    shaders/texture_grad_uv.hlsl)
 
 set(ASDIFF_SHADER_BINARIES)
 set(ASDIFF_SHADER_EMBEDDED_HEADERS)
@@ -108,6 +111,10 @@ if(ASDIFF_BUILD_PYTHON)
         "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/torch.py"
         "${CMAKE_CURRENT_BINARY_DIR}/python/asdiff_render/torch.py"
         COPYONLY)
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/atlas.py"
+        "${CMAKE_CURRENT_BINARY_DIR}/python/asdiff_render/atlas.py"
+        COPYONLY)
 
     pybind11_add_module(_asdiff_render python/bindings.cpp)
     target_link_libraries(_asdiff_render PRIVATE asdiff::render Python::NumPy)
@@ -127,6 +134,9 @@ if(ASDIFF_BUILD_PYTHON)
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/torch.py"
                 "$<TARGET_FILE_DIR:_asdiff_render>/torch.py"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/atlas.py"
+                "$<TARGET_FILE_DIR:_asdiff_render>/atlas.py"
         COMMAND "${CMAKE_COMMAND}" -E make_directory
                 "$<TARGET_FILE_DIR:_asdiff_render>/shaders")
     foreach(shader_binary IN LISTS ASDIFF_SHADER_BINARIES)

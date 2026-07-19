@@ -1,3 +1,4 @@
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -54,6 +55,19 @@ CullMode parse_cull_mode(const std::string& value) {
     throw std::invalid_argument("cull_mode must be 'none', 'back', or 'front'");
 }
 
+AddressMode parse_address_mode(const std::string& value) {
+    if (value == "clamp") {
+        return AddressMode::clamp;
+    }
+    if (value == "wrap") {
+        return AddressMode::wrap;
+    }
+    if (value == "mirror") {
+        return AddressMode::mirror;
+    }
+    throw std::invalid_argument("address_mode must be 'clamp', 'wrap', or 'mirror'");
+}
+
 py::array_t<float> vector_to_array(std::vector<float>&& values, const std::vector<py::ssize_t>& shape) {
     py::array_t<float> array(shape);
     if (!values.empty()) {
@@ -72,7 +86,8 @@ public:
         const py::array_t<std::uint32_t, py::array::c_style | py::array::forcecast>& indices,
         const std::pair<std::uint32_t, std::uint32_t>& resolution,
         const std::string& cull_mode,
-        bool output_barycentric_derivatives) {
+        bool output_barycentric_derivatives,
+        const std::optional<std::array<float, 4>>& viewport) {
         validate_positions(positions.request());
         validate_indices(indices.request());
         RasterizeOptions options;
@@ -80,6 +95,9 @@ public:
         options.width = resolution.second;
         options.cull_mode = parse_cull_mode(cull_mode);
         options.output_barycentric_derivatives = output_barycentric_derivatives;
+        if (viewport) {
+            options.viewport = Viewport{(*viewport)[0], (*viewport)[1], (*viewport)[2], (*viewport)[3]};
+        }
         auto output = rasterizer_.forward(as_span(positions), as_span(indices), options);
         auto raster = vector_to_array(
             std::move(output.raster),
@@ -99,7 +117,8 @@ public:
         const py::array_t<float, py::array::c_style | py::array::forcecast>& positions,
         const py::array_t<std::uint32_t, py::array::c_style | py::array::forcecast>& indices,
         const py::array_t<float, py::array::c_style | py::array::forcecast>& raster,
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& grad_raster) {
+        const py::array_t<float, py::array::c_style | py::array::forcecast>& grad_raster,
+        const std::optional<std::array<float, 4>>& viewport) {
         const auto position_info = positions.request();
         validate_positions(position_info);
         validate_indices(indices.request());
@@ -114,6 +133,9 @@ public:
         forward_output.width = width;
         forward_output.height = height;
         forward_output.raster.assign(raster.data(), raster.data() + raster.size());
+        if (viewport) {
+            forward_output.viewport = Viewport{(*viewport)[0], (*viewport)[1], (*viewport)[2], (*viewport)[3]};
+        }
         auto gradient = rasterizer_.backward(
             as_span(positions),
             as_span(indices),
@@ -193,6 +215,88 @@ public:
         return py::make_tuple(std::move(grad_attributes), std::move(grad_raster));
     }
 
+    py::array_t<float> texture_forward(
+        const py::array_t<float, py::array::c_style | py::array::forcecast>& texture,
+        const py::array_t<float, py::array::c_style | py::array::forcecast>& uv,
+        const py::array_t<float, py::array::c_style | py::array::forcecast>& raster,
+        const std::string& address_mode) {
+        const auto texture_info = texture.request();
+        if (texture_info.ndim != 3 || texture_info.shape[0] <= 0 || texture_info.shape[1] <= 0 ||
+            texture_info.shape[2] <= 0) {
+            throw std::invalid_argument("texture must have shape [texture_height, texture_width, channel_count]");
+        }
+        const auto uv_info = uv.request();
+        const auto raster_info = raster.request();
+        if (raster_info.ndim != 3 || raster_info.shape[2] != 4) {
+            throw std::invalid_argument("raster must have shape [image_height, image_width, 4]");
+        }
+        if (uv_info.ndim != 3 || uv_info.shape[0] != raster_info.shape[0] ||
+            uv_info.shape[1] != raster_info.shape[1] || uv_info.shape[2] != 2) {
+            throw std::invalid_argument("uv must have shape [image_height, image_width, 2]");
+        }
+        RasterizeOutput raster_output;
+        raster_output.height = static_cast<std::uint32_t>(raster_info.shape[0]);
+        raster_output.width = static_cast<std::uint32_t>(raster_info.shape[1]);
+        raster_output.raster.assign(raster.data(), raster.data() + raster.size());
+        const TextureDesc texture_desc{
+            static_cast<std::uint32_t>(texture_info.shape[1]),
+            static_cast<std::uint32_t>(texture_info.shape[0]),
+            static_cast<std::uint32_t>(texture_info.shape[2]),
+            parse_address_mode(address_mode),
+        };
+        auto output = rasterizer_.texture_forward(as_span(texture), texture_desc, as_span(uv), raster_output);
+        return vector_to_array(
+            std::move(output.values),
+            {
+                static_cast<py::ssize_t>(output.height),
+                static_cast<py::ssize_t>(output.width),
+                static_cast<py::ssize_t>(output.channel_count),
+            });
+    }
+
+    py::tuple texture_backward(
+        const py::array_t<float, py::array::c_style | py::array::forcecast>& texture,
+        const py::array_t<float, py::array::c_style | py::array::forcecast>& uv,
+        const py::array_t<float, py::array::c_style | py::array::forcecast>& raster,
+        const py::array_t<float, py::array::c_style | py::array::forcecast>& grad_sampled,
+        const std::string& address_mode) {
+        const auto texture_info = texture.request();
+        if (texture_info.ndim != 3 || texture_info.shape[0] <= 0 || texture_info.shape[1] <= 0 ||
+            texture_info.shape[2] <= 0) {
+            throw std::invalid_argument("texture must have shape [texture_height, texture_width, channel_count]");
+        }
+        const auto uv_info = uv.request();
+        const auto raster_info = raster.request();
+        const auto gradient_info = grad_sampled.request();
+        if (raster_info.ndim != 3 || raster_info.shape[2] != 4 || uv_info.ndim != 3 ||
+            uv_info.shape[0] != raster_info.shape[0] || uv_info.shape[1] != raster_info.shape[1] || uv_info.shape[2] != 2) {
+            throw std::invalid_argument("uv and raster dimensions are incompatible");
+        }
+        if (gradient_info.ndim != 3 || gradient_info.shape[0] != raster_info.shape[0] ||
+            gradient_info.shape[1] != raster_info.shape[1] || gradient_info.shape[2] != texture_info.shape[2]) {
+            throw std::invalid_argument("grad_sampled must have shape [image_height, image_width, channel_count]");
+        }
+        RasterizeOutput raster_output;
+        raster_output.height = static_cast<std::uint32_t>(raster_info.shape[0]);
+        raster_output.width = static_cast<std::uint32_t>(raster_info.shape[1]);
+        raster_output.raster.assign(raster.data(), raster.data() + raster.size());
+        const TextureDesc texture_desc{
+            static_cast<std::uint32_t>(texture_info.shape[1]),
+            static_cast<std::uint32_t>(texture_info.shape[0]),
+            static_cast<std::uint32_t>(texture_info.shape[2]),
+            parse_address_mode(address_mode),
+        };
+        auto gradients = rasterizer_.texture_backward(
+            as_span(texture), texture_desc, as_span(uv), raster_output, as_span(grad_sampled));
+        auto grad_texture = vector_to_array(
+            std::move(gradients.texture),
+            {texture_info.shape[0], texture_info.shape[1], texture_info.shape[2]});
+        auto grad_uv = vector_to_array(
+            std::move(gradients.uv),
+            {uv_info.shape[0], uv_info.shape[1], 2});
+        return py::make_tuple(std::move(grad_texture), std::move(grad_uv));
+    }
+
     [[nodiscard]] const DeviceInfo& device_info() const noexcept {
         return context_.device_info();
     }
@@ -226,14 +330,16 @@ PYBIND11_MODULE(_asdiff_render, module) {
             py::arg("indices"),
             py::arg("resolution"),
             py::arg("cull_mode") = "none",
-            py::arg("output_barycentric_derivatives") = true)
+            py::arg("output_barycentric_derivatives") = true,
+            py::arg("viewport") = py::none())
         .def(
             "backward",
             &PythonRasterizer::backward,
             py::arg("positions"),
             py::arg("indices"),
             py::arg("raster"),
-            py::arg("grad_raster"))
+            py::arg("grad_raster"),
+            py::arg("viewport") = py::none())
         .def(
             "interpolate_forward",
             &PythonRasterizer::interpolate_forward,
@@ -246,7 +352,22 @@ PYBIND11_MODULE(_asdiff_render, module) {
             py::arg("vertex_attributes"),
             py::arg("indices"),
             py::arg("raster"),
-            py::arg("grad_interpolated"));
+            py::arg("grad_interpolated"))
+        .def(
+            "texture_forward",
+            &PythonRasterizer::texture_forward,
+            py::arg("texture"),
+            py::arg("uv"),
+            py::arg("raster"),
+            py::arg("address_mode") = "clamp")
+        .def(
+            "texture_backward",
+            &PythonRasterizer::texture_backward,
+            py::arg("texture"),
+            py::arg("uv"),
+            py::arg("raster"),
+            py::arg("grad_sampled"),
+            py::arg("address_mode") = "clamp");
 
     module.def("enumerate_devices", &Context::enumerate_devices);
 }

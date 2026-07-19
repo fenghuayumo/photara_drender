@@ -29,6 +29,15 @@ bounding box. A second pipeline reduces corner gradients through a CPU-built ver
 The interpolation forward pass evaluates `u * a0 + v * a1 + (1-u-v) * a2`. Backward produces both vertex-attribute
 gradients and raster gradients, so PyTorch can chain an image loss through interpolation into clip-space positions.
 
+## Texture sampling and atlas optimization
+
+Level-zero texture sampling follows normalized texel-center bilinear semantics and supports clamp, wrap, and mirror addressing.
+Backward computes UV gradients analytically. Texture gradients use a CPU-built texel-to-sample adjacency table followed by
+a deterministic Vulkan reduction, avoiding floating-point atomics while keeping work proportional to actual samples.
+
+The Python atlas layer composes rasterization, UV interpolation, and texture sampling. It includes masked Charbonnier loss,
+chart-aware total variation, seam-pair consistency, viewport-aware multi-view rendering, and an Adam optimization loop.
+
 ## Synchronization and portability
 
 The baseline uses host-visible coherent storage buffers and synchronous queue submission. Dispatch is serialized per
@@ -41,8 +50,8 @@ participate.
 
 - Inputs are float32 clip positions `[V, 4]`, uint32 triangle indices `[T, 3]`, and a single image/layer.
 - Triangles crossing the near plane are skipped because homogeneous clipping is not implemented yet.
-- Gradients through barycentric pixel derivatives (a second-order path), texture filtering, and silhouette antialiasing are
-  future modules.
+- Gradients through barycentric pixel derivatives (a second-order path), mipmapped texture filtering, and silhouette
+  antialiasing are future modules.
 - The portable PyTorch path stages through host memory. A production throughput backend should add external-memory and
   external-semaphore tensor interop while retaining these APIs.
 - Device-local buffer pooling, asynchronous command batches, pipeline cache persistence, and GPU tile binning are the next

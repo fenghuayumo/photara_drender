@@ -4,6 +4,7 @@ struct PushConstants
     uint triangle_count;
     uint width;
     uint height;
+    float4 viewport;
 };
 
 [[vk::binding(0, 0)]] StructuredBuffer<float4> positions;
@@ -76,13 +77,13 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     const float2 s2 = p[2].xy / p[2].w;
     const float2 min_ndc = min(s0, min(s1, s2));
     const float2 max_ndc = max(s0, max(s1, s2));
-    const int min_x = clamp((int)floor((min_ndc.x * 0.5f + 0.5f) * push_constants.width),
+    const int min_x = clamp((int)floor((min_ndc.x * 0.5f + 0.5f) * push_constants.viewport.z + push_constants.viewport.x),
                             0, (int)push_constants.width);
-    const int max_x = clamp((int)ceil((max_ndc.x * 0.5f + 0.5f) * push_constants.width),
+    const int max_x = clamp((int)ceil((max_ndc.x * 0.5f + 0.5f) * push_constants.viewport.z + push_constants.viewport.x),
                             0, (int)push_constants.width);
-    const int min_y = clamp((int)floor((min_ndc.y * 0.5f + 0.5f) * push_constants.height),
+    const int min_y = clamp((int)floor((min_ndc.y * 0.5f + 0.5f) * push_constants.viewport.w + push_constants.viewport.y),
                             0, (int)push_constants.height);
-    const int max_y = clamp((int)ceil((max_ndc.y * 0.5f + 0.5f) * push_constants.height),
+    const int max_y = clamp((int)ceil((max_ndc.y * 0.5f + 0.5f) * push_constants.viewport.w + push_constants.viewport.y),
                             0, (int)push_constants.height);
     for (int y = min_y; y < max_y; ++y)
     {
@@ -103,8 +104,8 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
             }
 
             const float2 sample_ndc = float2(
-                (float(x) + 0.5f) * 2.0f / float(push_constants.width) - 1.0f,
-                (float(y) + 0.5f) * 2.0f / float(push_constants.height) - 1.0f);
+                (float(x) - push_constants.viewport.x + 0.5f) * 2.0f / push_constants.viewport.z - 1.0f,
+                (float(y) - push_constants.viewport.y + 0.5f) * 2.0f / push_constants.viewport.w - 1.0f);
             const float2 q[3] = {
                 p[0].xy - sample_ndc * p[0].w,
                 p[1].xy - sample_ndc * p[1].w,
