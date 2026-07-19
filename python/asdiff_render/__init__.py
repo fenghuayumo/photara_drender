@@ -15,7 +15,10 @@ from .mesh_processing import (
     MESH_QUALITY_TRIANGLE_COUNTS,
     MeshPreparationOptions,
     MeshPreparationResult,
+    has_mesh_ops_backend,
+    prepare_mesh_arrays_for_baking,
     prepare_mesh_for_baking,
+    repair_and_decimate_mesh,
 )
 
 try:
@@ -49,6 +52,9 @@ __all__ = [
     "MESH_QUALITY_TRIANGLE_COUNTS",
     "MeshPreparationOptions",
     "MeshPreparationResult",
+    "has_mesh_ops_backend",
+    "prepare_mesh_arrays_for_baking",
+    "repair_and_decimate_mesh",
     "Rasterizer",
     "TexturedRender",
     "TextureBaker",

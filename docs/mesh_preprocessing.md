@@ -1,13 +1,31 @@
 # Mesh preprocessing and COLMAP baking
 
-The production ordering is:
+The production ordering is entirely in-memory when `ASDIFF_BUILD_MESH_TOOLS=ON`:
 
-1. Instant Meshes optionally creates a regular, boundary-aligned quad layout.
-2. CGAL repairs and orients the source or remeshed polygon soup, duplicates combinatorially non-manifold vertices, removes degeneracies,
-   stitches compatible borders, and removes isolated vertices.
-3. CGAL Surface Mesh Simplification performs Lindstrom–Turk edge collapse while constraining boundary edges.
+1. Instant Meshes optionally remeshes the input (C++ backend when
+   `ASDIFF_ENABLE_INSTANT_MESHES=ON`, otherwise the optional Python binding).
+2. CGAL repairs and orients the source or remeshed polygon soup in memory, duplicates
+   combinatorially non-manifold vertices, removes degeneracies, stitches compatible
+   borders, and removes isolated vertices.
+3. CGAL Surface Mesh Simplification performs Lindstrom–Turk edge collapse while
+   constraining boundary edges.
 4. Microsoft UVAtlas unwraps the validated triangle manifold.
-5. COLMAP cameras and photographs feed Vulkan shadow-map plus inline ray-query texture projection.
+5. `TextureBaker` projects calibrated photographs into atlas space.
+
+C++ API (GPL/commercial optional library `asdiff::mesh`):
+
+```cpp
+#include "asdiff_mesh/mesh_ops.hpp"
+#include "asdiff_mesh/pipeline.hpp"
+
+auto manifold = asdiff_mesh::repair_and_decimate(positions, indices, {.target_face_count = 1'000'000});
+auto prepared = asdiff_mesh::prepare_for_baking(positions, indices, prepare_options);
+auto baked = asdiff_mesh::prepare_and_bake(context, positions, indices, views, pipeline_options);
+```
+
+`asdiff_mesh` links CGAL and therefore stays outside the MIT `asdiff_render` library.
+The CLI `asdiff_mesh_preprocessor` is only a thin file I/O wrapper around the same
+memory API.
 
 The CGAL tool guarantees a valid topological triangle manifold. A mesh may intentionally remain open, so “manifold”
 does not imply watertight. Geometric self-intersection is a separate property; pass `--check-self-intersections` to the

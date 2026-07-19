@@ -210,6 +210,10 @@ std::vector<FacePartition> partition_faces_pca(
         return {std::move(all_faces)};
     }
 
+    // Match Open3D TriangleMesh::ComputeUVAtlas: PCA stops when each face group is
+    // at most (vertex_count - 1) / (requested_partitions - 1). For typical meshes
+    // this yields more than `requested_partitions` groups; callers should read
+    // UvAtlasOutput::partition_count for the actual count.
     const std::size_t vertex_count = positions.size() / 3;
     const std::size_t max_faces = std::max<std::size_t>(
         1, (vertex_count - 1) / (static_cast<std::size_t>(requested_partitions) - 1));
@@ -328,6 +332,8 @@ PartitionOutput unwrap_partition(
         throw std::runtime_error("UVAtlasPartition failed with HRESULT " + std::to_string(result));
     }
     output.indices = decode_indices(index_bytes);
+    // UVAtlasPartition is assumed to preserve input face order in ib/face_charts.
+    // There is no face-remap output; size checks are the available consistency guard.
     if (output.indices.size() != faces.size() * 3 ||
         output.adjacency.size() != faces.size() * 3 ||
         output.face_charts.size() != faces.size() ||

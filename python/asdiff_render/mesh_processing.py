@@ -1,10 +1,7 @@
-"""Instant Meshes, CGAL decimation, and UVAtlas preparation pipeline."""
+"""In-memory Instant Meshes (optional), CGAL decimation, and UVAtlas preparation."""
 
 from __future__ import annotations
 
-import os
-import subprocess
-import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +10,14 @@ from typing import Literal, NamedTuple, Optional, Union
 import numpy as np
 
 from .baking import UnwrappedMesh, unwrap_mesh_uv
+
+try:
+    from ._asdiff_mesh import has_instant_meshes_backend, prepare_for_baking as _prepare_for_baking_cpp
+    from ._asdiff_mesh import repair_and_decimate as _repair_and_decimate_cpp
+except ImportError:
+    has_instant_meshes_backend = None
+    _prepare_for_baking_cpp = None
+    _repair_and_decimate_cpp = None
 
 
 MeshQuality = Literal["high", "medium", "low"]
@@ -77,74 +82,68 @@ class MeshPreparationResult(NamedTuple):
     uv_atlas_seconds: float
 
 
-def _resolve_cgal_executable(executable: Optional[Union[str, Path]]) -> Path:
-    candidates = []
-    if executable is not None:
-        candidates.append(Path(executable))
-    environment_path = os.environ.get("ASDIFF_MESH_PREPROCESSOR")
-    if environment_path:
-        candidates.append(Path(environment_path))
-    candidates.append(
-        Path(__file__).resolve().parent
-        / "tools"
-        / ("asdiff_mesh_preprocessor.exe" if os.name == "nt" else "asdiff_mesh_preprocessor")
-    )
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate.resolve()
-    raise FileNotFoundError(
-        "CGAL mesh preprocessor was not found; build with ASDIFF_BUILD_MESH_TOOLS=ON "
-        "or set ASDIFF_MESH_PREPROCESSOR"
+def has_mesh_ops_backend() -> bool:
+    return _prepare_for_baking_cpp is not None
+
+
+def repair_and_decimate_mesh(
+    positions: np.ndarray,
+    indices: np.ndarray,
+    *,
+    target_face_count: int = 1_000_000,
+    check_self_intersections: bool = False,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Repair and optionally decimate a triangle mesh entirely in memory."""
+
+    if _repair_and_decimate_cpp is None:
+        raise RuntimeError(
+            "in-memory mesh ops require ASDIFF_BUILD_MESH_TOOLS=ON and a CGAL-enabled build"
+        )
+    return _repair_and_decimate_cpp(
+        np.ascontiguousarray(positions, dtype=np.float32),
+        np.ascontiguousarray(indices, dtype=np.uint32),
+        target_face_count,
+        check_self_intersections,
     )
 
 
-def prepare_mesh_for_baking(
-    source_mesh: Union[str, Path],
+def prepare_mesh_arrays_for_baking(
+    positions: np.ndarray,
+    indices: np.ndarray,
     *,
     options: MeshPreparationOptions = MeshPreparationOptions(),
-    cgal_executable: Optional[Union[str, Path]] = None,
-    intermediate_directory: Optional[Union[str, Path]] = None,
 ) -> MeshPreparationResult:
-    """Run topology-safe remeshing and UV unwrapping for texture baking."""
+    """Prepare mesh arrays in memory: optional remesh, CGAL decimate, UVAtlas."""
 
     target_triangle_count = _resolve_target_triangle_count(options)
-    if options.instant_vertex_count is not None and options.instant_vertex_count < 4:
-        raise ValueError("instant_vertex_count must be greater than three")
-    try:
-        import trimesh
-    except ImportError as error:
-        raise ImportError("mesh preprocessing requires trimesh from asdiff-render[baking]") from error
-    pynanoinstantmeshes = None
-    if options.use_instant_remesh:
+    source_positions = np.ascontiguousarray(positions, dtype=np.float32)
+    source_indices = np.ascontiguousarray(indices, dtype=np.uint32)
+    if source_positions.ndim != 2 or source_positions.shape[1] != 3:
+        raise ValueError("positions must have shape [vertex_count, 3]")
+    if source_indices.ndim != 2 or source_indices.shape[1] != 3:
+        raise ValueError("indices must have shape [triangle_count, 3]")
+
+    if options.use_instant_remesh and (
+        has_instant_meshes_backend is None or not has_instant_meshes_backend()
+    ):
+        # Fallback to Python Instant Meshes binding, then continue in C++ memory.
         try:
             import pynanoinstantmeshes
         except ImportError as error:
-            raise ImportError("Instant Meshes remeshing requires pynanoinstantmeshes") from error
-
-    source = trimesh.load(str(source_mesh), force="mesh", process=False)
-    if not isinstance(source, trimesh.Trimesh) or source.faces.size == 0:
-        raise ValueError("source_mesh must contain a non-empty triangle mesh")
-    source_positions = np.ascontiguousarray(source.vertices, dtype=np.float32)
-    source_indices = np.ascontiguousarray(source.faces, dtype=np.uint32)
-
-    owned_temporary_directory = None
-    if intermediate_directory is None:
-        owned_temporary_directory = tempfile.TemporaryDirectory(prefix="asdiff_mesh_")
-        working_directory = Path(owned_temporary_directory.name)
-    else:
-        working_directory = Path(intermediate_directory)
-        working_directory.mkdir(parents=True, exist_ok=True)
-    instant_path = working_directory / "instant_remesh.ply"
-    source_path = working_directory / "source_mesh.ply"
-    manifold_path = working_directory / "manifold_decimated.ply"
-    if options.use_instant_remesh:
+            raise ImportError(
+                "Instant Meshes remeshing requires ASDIFF_ENABLE_INSTANT_MESHES=ON "
+                "or pynanoinstantmeshes"
+            ) from error
+        if _repair_and_decimate_cpp is None:
+            raise RuntimeError(
+                "in-memory mesh ops require ASDIFF_BUILD_MESH_TOOLS=ON and a CGAL-enabled build"
+            )
         instant_vertex_count = (
             max(4, (target_triangle_count + 7) // 8)
             if options.instant_vertex_count is None
             else options.instant_vertex_count
         )
         begin = time.perf_counter()
-        assert pynanoinstantmeshes is not None
         remeshed_positions, remeshed_faces = pynanoinstantmeshes.remesh(
             source_positions,
             source_indices,
@@ -157,59 +156,127 @@ def prepare_mesh_for_baking(
             deterministic=options.deterministic,
         )
         remesh_seconds = time.perf_counter() - begin
-        remeshed = trimesh.Trimesh(vertices=remeshed_positions, faces=remeshed_faces, process=False)
-        remeshed.export(instant_path)
-        cgal_input_path = instant_path
-        remeshed_vertex_count = int(np.asarray(remeshed_positions).shape[0])
-        remeshed_face_count = int(remeshed.faces.shape[0])
-    else:
-        remesh_seconds = 0.0
-        source.export(source_path)
-        cgal_input_path = source_path
-        remeshed_vertex_count = int(source_positions.shape[0])
-        remeshed_face_count = int(source_indices.shape[0])
-
-    executable = _resolve_cgal_executable(cgal_executable)
-    begin = time.perf_counter()
-    process = subprocess.run(
-        [str(executable), str(cgal_input_path), str(manifold_path), str(target_triangle_count)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    cgal_seconds = time.perf_counter() - begin
-    if process.returncode != 0:
-        raise RuntimeError(
-            f"CGAL preprocessing failed with exit code {process.returncode}:\n{process.stdout}\n{process.stderr}"
+        remeshed_positions = np.ascontiguousarray(remeshed_positions, dtype=np.float32)
+        remeshed_faces = np.ascontiguousarray(remeshed_faces, dtype=np.uint32)
+        if remeshed_faces.ndim == 2 and remeshed_faces.shape[1] == 4:
+            # Triangulate quads in memory.
+            a = remeshed_faces[:, 0]
+            b = remeshed_faces[:, 1]
+            c = remeshed_faces[:, 2]
+            d = remeshed_faces[:, 3]
+            remeshed_faces = np.stack([a, b, c, a, c, d], axis=1).reshape(-1, 3)
+        begin = time.perf_counter()
+        manifold_positions, manifold_indices = _repair_and_decimate_cpp(
+            remeshed_positions, remeshed_faces, target_triangle_count, False
         )
-    manifold = trimesh.load(str(manifold_path), force="mesh", process=False)
-    manifold_positions = np.ascontiguousarray(manifold.vertices, dtype=np.float32)
-    manifold_indices = np.ascontiguousarray(manifold.faces, dtype=np.uint32)
+        cgal_seconds = time.perf_counter() - begin
+        begin = time.perf_counter()
+        unwrapped = unwrap_mesh_uv(
+            manifold_positions,
+            manifold_indices,
+            resolution=options.atlas_resolution,
+            gutter=options.atlas_gutter,
+            max_stretch=options.atlas_max_stretch,
+            quality=options.atlas_quality,
+            parallel_partitions=options.atlas_parallel_partitions,
+            worker_count=options.atlas_worker_count,
+        )
+        uv_atlas_seconds = time.perf_counter() - begin
+        return MeshPreparationResult(
+            unwrapped,
+            int(source_positions.shape[0]),
+            int(source_indices.shape[0]),
+            int(remeshed_positions.shape[0]),
+            int(remeshed_faces.shape[0]),
+            int(manifold_positions.shape[0]),
+            int(manifold_indices.shape[0]),
+            remesh_seconds,
+            cgal_seconds,
+            uv_atlas_seconds,
+        )
+
+    if _prepare_for_baking_cpp is None:
+        raise RuntimeError(
+            "in-memory mesh ops require ASDIFF_BUILD_MESH_TOOLS=ON and a CGAL-enabled build"
+        )
 
     begin = time.perf_counter()
-    unwrapped = unwrap_mesh_uv(
-        manifold_positions,
-        manifold_indices,
-        resolution=options.atlas_resolution,
-        gutter=options.atlas_gutter,
-        max_stretch=options.atlas_max_stretch,
-        quality=options.atlas_quality,
-        parallel_partitions=options.atlas_parallel_partitions,
-        worker_count=options.atlas_worker_count,
+    (
+        positions_out,
+        normals_out,
+        uv_out,
+        indices_out,
+        vertex_remap,
+        face_chart_ids,
+        chart_count,
+        max_stretch,
+        partition_count,
+        remeshed_vertex_count,
+        remeshed_face_count,
+        manifold_vertex_count,
+        manifold_face_count,
+    ) = _prepare_for_baking_cpp(
+        source_positions,
+        source_indices,
+        target_triangle_count,
+        options.use_instant_remesh,
+        options.atlas_resolution,
+        options.atlas_gutter,
+        options.atlas_max_stretch,
+        options.atlas_quality,
+        options.atlas_parallel_partitions,
+        options.atlas_worker_count,
     )
-    uv_atlas_seconds = time.perf_counter() - begin
-    result = MeshPreparationResult(
+    pipeline_seconds = time.perf_counter() - begin
+    unwrapped = UnwrappedMesh(
+        positions_out,
+        normals_out,
+        uv_out,
+        indices_out,
+        vertex_remap,
+        face_chart_ids,
+        int(chart_count),
+        float(max_stretch),
+        int(partition_count),
+    )
+    return MeshPreparationResult(
         unwrapped,
         int(source_positions.shape[0]),
         int(source_indices.shape[0]),
-        remeshed_vertex_count,
-        remeshed_face_count,
-        int(manifold_positions.shape[0]),
-        int(manifold_indices.shape[0]),
-        remesh_seconds,
-        cgal_seconds,
-        uv_atlas_seconds,
+        int(remeshed_vertex_count),
+        int(remeshed_face_count),
+        int(manifold_vertex_count),
+        int(manifold_face_count),
+        0.0,
+        pipeline_seconds,
+        0.0,
     )
-    if owned_temporary_directory is not None:
-        owned_temporary_directory.cleanup()
-    return result
+
+
+def prepare_mesh_for_baking(
+    source_mesh: Union[str, Path, tuple[np.ndarray, np.ndarray]],
+    *,
+    options: MeshPreparationOptions = MeshPreparationOptions(),
+    cgal_executable: Optional[Union[str, Path]] = None,
+    intermediate_directory: Optional[Union[str, Path]] = None,
+) -> MeshPreparationResult:
+    """Prepare a mesh for texture baking entirely in memory when mesh tools are built.
+
+    ``cgal_executable`` and ``intermediate_directory`` are ignored; they remain only for
+    source compatibility with older call sites.
+    """
+
+    del cgal_executable, intermediate_directory
+    if isinstance(source_mesh, (str, Path)):
+        try:
+            import trimesh
+        except ImportError as error:
+            raise ImportError("loading mesh files requires trimesh from asdiff-render[baking]") from error
+        source = trimesh.load(str(source_mesh), force="mesh", process=False)
+        if not isinstance(source, trimesh.Trimesh) or source.faces.size == 0:
+            raise ValueError("source_mesh must contain a non-empty triangle mesh")
+        positions = np.ascontiguousarray(source.vertices, dtype=np.float32)
+        indices = np.ascontiguousarray(source.faces, dtype=np.uint32)
+    else:
+        positions, indices = source_mesh
+    return prepare_mesh_arrays_for_baking(positions, indices, options=options)

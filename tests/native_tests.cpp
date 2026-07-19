@@ -184,9 +184,29 @@ int main() {
                 asdiff_render::unwrap_uv(world_positions, indices, unwrap_options);
             require(parallel_unwrapped.indices.size() == indices.size(),
                     "parallel UVAtlas returned an invalid index count");
+            require(parallel_unwrapped.face_chart_ids.size() == indices.size() / 3,
+                    "parallel UVAtlas omitted face chart IDs");
             require(parallel_unwrapped.vertex_remap.size() ==
                         parallel_unwrapped.positions.size() / 3,
                     "parallel UVAtlas returned an invalid vertex remap");
+            require(parallel_unwrapped.partition_count >= 1,
+                    "parallel UVAtlas omitted partition_count");
+            require(
+                std::all_of(
+                    parallel_unwrapped.indices.begin(),
+                    parallel_unwrapped.indices.end(),
+                    [&](std::uint32_t index) {
+                        return index < parallel_unwrapped.positions.size() / 3;
+                    }),
+                "parallel UVAtlas returned an out-of-range index");
+            require(
+                std::all_of(
+                    parallel_unwrapped.uv.begin(),
+                    parallel_unwrapped.uv.end(),
+                    [](float value) {
+                        return std::isfinite(value) && value >= -1e-3F && value <= 1.0F + 1e-3F;
+                    }),
+                "parallel UVAtlas returned UV coordinates outside the atlas");
 
             const std::vector<float> non_manifold_positions{
                 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F,

@@ -22,8 +22,6 @@ def main() -> None:
     parser.add_argument("--resolution", type=int, default=4096)
     parser.add_argument("--parallel-partitions", type=int, default=4)
     parser.add_argument("--worker-count", type=int, default=0)
-    parser.add_argument("--cgal-executable")
-    parser.add_argument("--intermediate-directory")
     arguments = parser.parse_args()
 
     options = asdiff_render.MeshPreparationOptions(
@@ -35,12 +33,11 @@ def main() -> None:
         atlas_parallel_partitions=arguments.parallel_partitions,
         atlas_worker_count=arguments.worker_count,
     )
-    result = asdiff_render.prepare_mesh_for_baking(
-        arguments.source_mesh,
-        options=options,
-        cgal_executable=arguments.cgal_executable,
-        intermediate_directory=arguments.intermediate_directory,
-    )
+    if not asdiff_render.has_mesh_ops_backend():
+        raise SystemExit(
+            "in-memory mesh ops unavailable; rebuild with ASDIFF_BUILD_MESH_TOOLS=ON and CGAL"
+        )
+    result = asdiff_render.prepare_mesh_for_baking(arguments.source_mesh, options=options)
     output_path = Path(arguments.output_npz)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     mesh = result.mesh

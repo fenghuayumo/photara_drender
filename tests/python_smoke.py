@@ -29,6 +29,10 @@ def main() -> None:
         world_positions, indices, resolution=(64, 64), parallel_partitions=2
     )
     assert parallel_unwrapped.indices.shape == indices.shape
+    assert parallel_unwrapped.uv.shape[1] == 2
+    assert parallel_unwrapped.face_chart_ids.shape == (indices.shape[0],)
+    assert parallel_unwrapped.partition_count >= 1
+    assert np.isfinite(parallel_unwrapped.uv).all()
     assert asdiff_render.MESH_QUALITY_TRIANGLE_COUNTS == {
         "high": 1_000_000,
         "medium": 500_000,
