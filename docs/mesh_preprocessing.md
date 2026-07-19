@@ -2,13 +2,12 @@
 
 The production ordering is:
 
-1. Instant Meshes creates a lower-density, boundary-aligned quad layout.
-2. The quads are triangulated for interchange.
-3. CGAL repairs and orients the polygon soup, duplicates combinatorially non-manifold vertices, removes degeneracies,
+1. Instant Meshes optionally creates a regular, boundary-aligned quad layout.
+2. CGAL repairs and orients the source or remeshed polygon soup, duplicates combinatorially non-manifold vertices, removes degeneracies,
    stitches compatible borders, and removes isolated vertices.
-4. CGAL Surface Mesh Simplification performs Lindstrom–Turk edge collapse while constraining boundary edges.
-5. Microsoft UVAtlas unwraps the validated triangle manifold.
-6. COLMAP cameras and photographs feed Vulkan shadow-map plus inline ray-query texture projection.
+3. CGAL Surface Mesh Simplification performs Lindstrom–Turk edge collapse while constraining boundary edges.
+4. Microsoft UVAtlas unwraps the validated triangle manifold.
+5. COLMAP cameras and photographs feed Vulkan shadow-map plus inline ray-query texture projection.
 
 The CGAL tool guarantees a valid topological triangle manifold. A mesh may intentionally remain open, so “manifold”
 does not imply watertight. Geometric self-intersection is a separate property; pass `--check-self-intersections` to the
@@ -27,9 +26,24 @@ cmake --build build_cgal --config Release
 The Python API locates the installed `asdiff_render/tools/asdiff_mesh_preprocessor.exe`, an explicit
 `cgal_executable`, or `ASDIFF_MESH_PREPROCESSOR`.
 
-UVAtlas oct2025 contains one OpenMP region in chart parameterization. OpenMP is enabled by default in this project,
-but initial connected-chart splitting and packing remain serial upstream work. Decimating before UVAtlas therefore has
-a larger performance effect than increasing thread count alone.
+UVAtlas oct2025 contains an internal OpenMP region in chart parameterization. It is disabled by default because it
+oversubscribes the CPU when several PCA partitions are charted concurrently. Enable `ASDIFF_UVATLAS_USE_OPENMP` only
+for builds that use `parallel_partitions=1`.
+
+The preparation defaults mirror Open3D's UVAtlas parameters: `gutter=1`, `max_stretch=1/6`, and
+`quality=None`, which passes `UVATLAS_DEFAULT` and lets UVAtlas select its geodesic mode. Pipelines that require the
+pre-0.4 behavior can explicitly set `atlas_gutter=4`, `atlas_max_stretch=0.3`, and `atlas_quality=False`.
+
+Mesh density is selected with `MeshPreparationOptions.quality`: `high` (the default) targets 1,000,000 triangles,
+`medium` targets 500,000, and `low` targets 100,000. `target_triangle_count` overrides the selected preset. These are
+requested targets: smaller inputs are not subdivided, while meshes with many constrained boundary edges may remain
+above the target. Instant Meshes is disabled by default to preserve scan detail; set `use_instant_remesh=True` when
+regular retopology is preferred.
+
+`atlas_parallel_partitions` enables the Open3D-style path: face centroids are recursively PCA-partitioned, each
+partition is charted concurrently with `UVAtlasPartition`, and all charts are packed together once with
+`UVAtlasPack`. Mesh preparation defaults to four partitions; direct `unwrap_uv()` calls default to one. Parallel
+partitioning is faster on large meshes but may introduce additional island boundaries.
 
 COLMAP support currently accepts undistorted `PINHOLE` and `SIMPLE_PINHOLE` text models. Other camera models must first
 be undistorted by COLMAP. `load_colmap_projection()` converts COLMAP world-to-camera poses into row-major clip matrices,

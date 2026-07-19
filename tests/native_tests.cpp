@@ -178,6 +178,31 @@ int main() {
                     "UVAtlas returned invalid vertex data");
             require(unwrapped.indices.size() == indices.size(), "UVAtlas returned an invalid index count");
             require(unwrapped.face_chart_ids.size() == indices.size() / 3, "UVAtlas omitted face chart IDs");
+
+            unwrap_options.parallel_partitions = 2;
+            const auto parallel_unwrapped =
+                asdiff_render::unwrap_uv(world_positions, indices, unwrap_options);
+            require(parallel_unwrapped.indices.size() == indices.size(),
+                    "parallel UVAtlas returned an invalid index count");
+            require(parallel_unwrapped.vertex_remap.size() ==
+                        parallel_unwrapped.positions.size() / 3,
+                    "parallel UVAtlas returned an invalid vertex remap");
+
+            const std::vector<float> non_manifold_positions{
+                0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F,
+                0.0F, -1.0F, 0.0F, 0.0F, 0.0F, 1.0F,
+            };
+            const std::vector<std::uint32_t> non_manifold_indices{
+                0, 1, 2, 1, 0, 3, 0, 1, 4,
+            };
+            bool rejected_non_manifold = false;
+            try {
+                static_cast<void>(asdiff_render::unwrap_uv(
+                    non_manifold_positions, non_manifold_indices, unwrap_options));
+            } catch (const std::invalid_argument&) {
+                rejected_non_manifold = true;
+            }
+            require(rejected_non_manifold, "UVAtlas accepted a non-manifold edge");
         }
 
         asdiff_render::ProjectionView projection_view;

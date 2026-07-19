@@ -25,6 +25,15 @@ def main() -> None:
     assert unwrapped.positions.shape[1] == 3 and unwrapped.uv.shape[1] == 2
     assert unwrapped.indices.shape == indices.shape
     assert unwrapped.face_chart_ids.shape == (indices.shape[0],)
+    parallel_unwrapped = asdiff_render.unwrap_mesh_uv(
+        world_positions, indices, resolution=(64, 64), parallel_partitions=2
+    )
+    assert parallel_unwrapped.indices.shape == indices.shape
+    assert asdiff_render.MESH_QUALITY_TRIANGLE_COUNTS == {
+        "high": 1_000_000,
+        "medium": 500_000,
+        "low": 100_000,
+    }
     image = np.zeros((16, 16, 4), dtype=np.float32)
     image[..., 0] = 0.75
     image[..., 1] = 0.25

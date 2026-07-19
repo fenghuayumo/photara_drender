@@ -10,7 +10,7 @@ option(ASDIFF_BUILD_TESTS "Build native tests" ON)
 option(ASDIFF_ENABLE_VALIDATION "Enable Vulkan validation by default" OFF)
 option(ASDIFF_ENABLE_UVATLAS "Enable Microsoft UVAtlas unwrapping" ON)
 option(ASDIFF_FETCH_UVATLAS "Fetch a pinned UVAtlas source release when it is not installed" ON)
-option(ASDIFF_UVATLAS_USE_OPENMP "Enable UVAtlas OpenMP parallelism" ON)
+option(ASDIFF_UVATLAS_USE_OPENMP "Enable UVAtlas internal OpenMP (disable when using parallel partitions)" OFF)
 option(ASDIFF_BUILD_MESH_TOOLS "Build GPL/commercial CGAL mesh preprocessing tools" OFF)
 
 set(CMAKE_CXX_STANDARD 20)

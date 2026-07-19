@@ -12,6 +12,7 @@ from ._asdiff_render import (
 from .baking import BakedTexture, UnwrappedMesh, project_texture_atlas, unwrap_mesh_uv
 from .colmap import ColmapProjection, load_colmap_projection, load_projection_masks, read_colmap_text_model
 from .mesh_processing import (
+    MESH_QUALITY_TRIANGLE_COUNTS,
     MeshPreparationOptions,
     MeshPreparationResult,
     prepare_mesh_for_baking,
@@ -45,6 +46,7 @@ __all__ = [
     "BakedTexture",
     "ColmapProjection",
     "DeviceInfo",
+    "MESH_QUALITY_TRIANGLE_COUNTS",
     "MeshPreparationOptions",
     "MeshPreparationResult",
     "Rasterizer",

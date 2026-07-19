@@ -116,6 +116,7 @@ public:
     }
 
     std::uint32_t chart_count() const noexcept { return output_.chart_count; }
+    std::uint32_t partition_count() const noexcept { return output_.partition_count; }
     float max_stretch() const noexcept { return output_.max_stretch; }
 
 private:
@@ -550,6 +551,7 @@ PYBIND11_MODULE(_asdiff_render, module) {
         .def_property_readonly("vertex_remap", &PythonUvAtlasResult::vertex_remap)
         .def_property_readonly("face_chart_ids", &PythonUvAtlasResult::face_chart_ids)
         .def_property_readonly("chart_count", &PythonUvAtlasResult::chart_count)
+        .def_property_readonly("partition_count", &PythonUvAtlasResult::partition_count)
         .def_property_readonly("max_stretch", &PythonUvAtlasResult::max_stretch);
 
     module.def("has_uv_atlas_backend", &has_uv_atlas_backend);
@@ -561,7 +563,9 @@ PYBIND11_MODULE(_asdiff_render, module) {
            float gutter,
            float max_stretch,
            std::uint32_t max_chart_count,
-           bool quality) {
+           const std::optional<bool>& quality,
+           std::uint32_t parallel_partitions,
+           std::uint32_t worker_count) {
             const auto info = positions.request();
             if (info.ndim != 2 || info.shape[1] != 3 || info.shape[0] <= 0) {
                 throw std::invalid_argument("positions must have shape [vertex_count, 3]");
@@ -574,11 +578,14 @@ PYBIND11_MODULE(_asdiff_render, module) {
             options.max_stretch = max_stretch;
             options.max_chart_count = max_chart_count;
             options.quality = quality;
+            options.parallel_partitions = parallel_partitions;
+            options.worker_count = worker_count;
             return PythonUvAtlasResult(asdiff_render::unwrap_uv(as_span(positions), as_span(indices), options));
         },
         py::arg("positions"), py::arg("indices"), py::arg("resolution") = std::pair{1024U, 1024U},
-        py::arg("gutter") = 2.0F, py::arg("max_stretch") = 0.16667F,
-        py::arg("max_chart_count") = 0, py::arg("quality") = true);
+        py::arg("gutter") = 1.0F, py::arg("max_stretch") = 1.0F / 6.0F,
+        py::arg("max_chart_count") = 0, py::arg("quality") = py::none(),
+        py::arg("parallel_partitions") = 1, py::arg("worker_count") = 0);
 
     py::class_<PythonTextureBaker>(module, "TextureBaker")
         .def(py::init<std::uint32_t, bool>(), py::arg("device_index") = 0, py::arg("enable_validation") = false)

@@ -101,9 +101,11 @@ struct UvAtlasOptions {
     std::uint32_t width = 1024;
     std::uint32_t height = 1024;
     std::uint32_t max_chart_count = 0;
-    float max_stretch = 0.16667F;
-    float gutter = 2.0F;
-    bool quality = true;
+    float max_stretch = 1.0F / 6.0F;
+    float gutter = 1.0F;
+    std::optional<bool> quality = std::nullopt;
+    std::uint32_t parallel_partitions = 1;
+    std::uint32_t worker_count = 0;
 };
 
 struct UvAtlasOutput {
@@ -113,6 +115,7 @@ struct UvAtlasOutput {
     std::vector<std::uint32_t> vertex_remap;
     std::vector<std::uint32_t> face_chart_ids;
     std::uint32_t chart_count = 0;
+    std::uint32_t partition_count = 1;
     float max_stretch = 0.0F;
 };
 

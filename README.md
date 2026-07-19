@@ -49,7 +49,7 @@ mesh = unwrap_mesh_uv(
     indices,
     normals,
     resolution=(2048, 2048),
-    gutter=4.0,
+    gutter=1.0,
 )
 
 baked = project_texture_atlas(
@@ -74,12 +74,14 @@ source_view = baked.source_view
 
 ## 扫描 mesh 完整流水线
 
-`prepare_mesh_for_baking()` 按固定顺序执行 Instant Meshes 重网格化、CGAL polygon-soup 流形修复、
-保边界 Decimation 和 UVAtlas 展 UV。随后可用 COLMAP 文本模型直接烘焙：
+`prepare_mesh_for_baking()` 默认保留原始扫描拓扑，执行 CGAL polygon-soup 流形修复、保边界
+Decimation 和 Open3D 风格的并行 UVAtlas 展 UV。质量档位为 `high=100万`（默认）、
+`medium=50万`、`low=10万` 面；Instant Meshes 规则重网格化可按需开启：
 
 ```python
 prepared = prepare_mesh_for_baking(
     "mesh.ply",
+    options=MeshPreparationOptions(quality="high", atlas_parallel_partitions=4),
     cgal_executable="asdiff_mesh_preprocessor.exe",
 )
 projection = load_colmap_projection(
@@ -98,7 +100,7 @@ baked = project_texture_atlas(
 )
 ```
 
-命令行示例见 `examples/bake_colmap.py`，拓扑保证和构建方式见
+预处理命令行见 `examples/prepare_mesh.py`，烘焙命令行见 `examples/bake_colmap.py`，拓扑保证和构建方式见
 [mesh 预处理说明](docs/mesh_preprocessing.md)。
 
 ## 可微 atlas 优化

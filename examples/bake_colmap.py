@@ -28,15 +28,24 @@ def main() -> None:
     arguments = parser.parse_args()
 
     archive = np.load(arguments.mesh_npz)
+    face_chart_ids = archive.get(
+        "face_chart_ids", np.zeros(archive["indices"].shape[0], dtype=np.uint32)
+    )
+    chart_count = (
+        int(archive["chart_count"])
+        if "chart_count" in archive
+        else int(face_chart_ids.max() + 1) if face_chart_ids.size else 0
+    )
     mesh = asdiff_render.UnwrappedMesh(
         archive["positions"],
         archive["normals"],
         archive["uv"],
         archive["indices"],
         archive.get("vertex_remap", np.arange(archive["positions"].shape[0], dtype=np.uint32)),
-        archive.get("face_chart_ids", np.zeros(archive["indices"].shape[0], dtype=np.uint32)),
-        int(archive["face_chart_ids"].max() + 1) if "face_chart_ids" in archive else 0,
-        0.0,
+        face_chart_ids,
+        chart_count,
+        float(archive["max_stretch"]) if "max_stretch" in archive else 0.0,
+        int(archive["partition_count"]) if "partition_count" in archive else 1,
     )
     projection = asdiff_render.load_colmap_projection(
         arguments.sparse_path,
