@@ -1,0 +1,22 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.12", "numpy>=1.23"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "asdiff-render"
+version = "0.1.0"
+description = "Cross-platform differentiable rasterization using C++20 and Vulkan"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.23"]
+
+[project.optional-dependencies]
+torch = ["torch>=2.0"]
+
+[tool.scikit-build]
+cmake.build-type = "Release"
+wheel.packages = ["python/asdiff_render"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

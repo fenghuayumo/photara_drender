@@ -1,0 +1,8 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(Vulkan 1.2)
+include("${CMAKE_CURRENT_LIST_DIR}/asdiff_renderTargets.cmake")
+
+check_required_components(asdiff_render)
+
