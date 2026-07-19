@@ -26,6 +26,7 @@ private:
     std::unique_ptr<Impl> impl_;
 
     friend class Rasterizer;
+    friend class TextureBaker;
 };
 
 } // namespace asdiff_render

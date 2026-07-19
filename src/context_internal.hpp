@@ -31,6 +31,28 @@ struct Buffer {
 
     void upload(const void* source, std::size_t byte_size, std::size_t offset = 0);
     void download(void* destination, std::size_t byte_size, std::size_t offset = 0) const;
+    [[nodiscard]] VkDeviceAddress device_address() const;
+};
+
+struct AccelerationStructure {
+    VkDevice device = VK_NULL_HANDLE;
+    VkAccelerationStructureKHR handle = VK_NULL_HANDLE;
+    PFN_vkDestroyAccelerationStructureKHR destroy_function = nullptr;
+    Buffer storage;
+
+    AccelerationStructure() = default;
+    ~AccelerationStructure();
+    AccelerationStructure(AccelerationStructure&& other) noexcept;
+    AccelerationStructure& operator=(AccelerationStructure&& other) noexcept;
+    AccelerationStructure(const AccelerationStructure&) = delete;
+    AccelerationStructure& operator=(const AccelerationStructure&) = delete;
+};
+
+struct RayQueryScene {
+    Buffer vertices;
+    Buffer indices;
+    AccelerationStructure bottom_level;
+    AccelerationStructure top_level;
 };
 
 struct ComputePipeline {
@@ -45,6 +67,11 @@ struct ComputePipeline {
         VkDevice logical_device,
         std::span<const std::byte> spir_v_bytes,
         std::uint32_t storage_buffer_count,
+        std::uint32_t push_constant_size);
+    ComputePipeline(
+        VkDevice logical_device,
+        std::span<const std::byte> spir_v_bytes,
+        std::span<const VkDescriptorType> descriptor_types,
         std::uint32_t push_constant_size);
     ~ComputePipeline();
     ComputePipeline(ComputePipeline&& other) noexcept;
@@ -66,6 +93,13 @@ public:
         const std::string& shader_name,
         std::uint32_t storage_buffer_count,
         std::uint32_t push_constant_size) const;
+    [[nodiscard]] ComputePipeline create_pipeline(
+        const std::string& shader_name,
+        std::span<const VkDescriptorType> descriptor_types,
+        std::uint32_t push_constant_size) const;
+    [[nodiscard]] RayQueryScene create_ray_query_scene(
+        std::span<const float> positions,
+        std::span<const std::uint32_t> triangle_indices) const;
     void dispatch(
         const ComputePipeline& pipeline,
         std::span<const VkDescriptorBufferInfo> buffers,
@@ -74,6 +108,16 @@ public:
         std::uint32_t group_count_x,
         std::uint32_t group_count_y = 1,
         std::uint32_t group_count_z = 1) const;
+    void dispatch_ray_query(
+        const ComputePipeline& pipeline,
+        const Buffer& positions,
+        const Buffer& normals,
+        const Buffer& raster,
+        const AccelerationStructure& scene,
+        const Buffer& visibility,
+        const void* push_constants,
+        std::uint32_t push_constant_size,
+        std::uint32_t group_count_x) const;
 
     DeviceInfo device_info;
     VkInstance instance = VK_NULL_HANDLE;

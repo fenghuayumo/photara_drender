@@ -76,6 +76,179 @@ py::array_t<float> vector_to_array(std::vector<float>&& values, const std::vecto
     return array;
 }
 
+py::array_t<std::uint32_t> vector_to_u32_array(
+    std::vector<std::uint32_t>&& values,
+    const std::vector<py::ssize_t>& shape) {
+    py::array_t<std::uint32_t> array(shape);
+    if (!values.empty()) {
+        std::memcpy(array.mutable_data(), values.data(), values.size() * sizeof(std::uint32_t));
+    }
+    return array;
+}
+
+class PythonUvAtlasResult {
+public:
+    explicit PythonUvAtlasResult(UvAtlasOutput output) : output_(std::move(output)) {}
+
+    py::array_t<float> positions() const {
+        auto values = output_.positions;
+        return vector_to_array(std::move(values), {static_cast<py::ssize_t>(output_.positions.size() / 3), 3});
+    }
+
+    py::array_t<float> uv() const {
+        auto values = output_.uv;
+        return vector_to_array(std::move(values), {static_cast<py::ssize_t>(output_.uv.size() / 2), 2});
+    }
+
+    py::array_t<std::uint32_t> indices() const {
+        auto values = output_.indices;
+        return vector_to_u32_array(std::move(values), {static_cast<py::ssize_t>(output_.indices.size() / 3), 3});
+    }
+
+    py::array_t<std::uint32_t> vertex_remap() const {
+        auto values = output_.vertex_remap;
+        return vector_to_u32_array(std::move(values), {static_cast<py::ssize_t>(output_.vertex_remap.size())});
+    }
+
+    py::array_t<std::uint32_t> face_chart_ids() const {
+        auto values = output_.face_chart_ids;
+        return vector_to_u32_array(std::move(values), {static_cast<py::ssize_t>(output_.face_chart_ids.size())});
+    }
+
+    std::uint32_t chart_count() const noexcept { return output_.chart_count; }
+    float max_stretch() const noexcept { return output_.max_stretch; }
+
+private:
+    UvAtlasOutput output_;
+};
+
+class PythonTextureBaker {
+public:
+    PythonTextureBaker(std::uint32_t device_index, bool enable_validation)
+        : context_(ContextOptions{device_index, enable_validation}), baker_(context_) {}
+
+    py::tuple bake(
+        const py::array_t<float, py::array::c_style | py::array::forcecast>& positions,
+        const py::array_t<float, py::array::c_style | py::array::forcecast>& normals,
+        const py::array_t<float, py::array::c_style | py::array::forcecast>& uv,
+        const py::array_t<std::uint32_t, py::array::c_style | py::array::forcecast>& indices,
+        const py::list& images,
+        const py::array_t<float, py::array::c_style | py::array::forcecast>& world_to_clip,
+        const py::array_t<float, py::array::c_style | py::array::forcecast>& camera_positions,
+        const py::object& visibility_masks,
+        const py::object& viewports,
+        const std::pair<std::uint32_t, std::uint32_t>& resolution,
+        const std::string& blend_mode,
+        const std::string& visibility_mode,
+        std::uint32_t pcf_radius,
+        bool allow_visibility_fallback) {
+        const auto position_info = positions.request();
+        if (position_info.ndim != 2 || position_info.shape[1] != 3 || position_info.shape[0] <= 0) {
+            throw std::invalid_argument("positions must have shape [vertex_count, 3]");
+        }
+        const auto normal_info = normals.request();
+        const auto uv_info = uv.request();
+        if (normal_info.ndim != 2 || normal_info.shape[0] != position_info.shape[0] || normal_info.shape[1] != 3) {
+            throw std::invalid_argument("normals must have shape [vertex_count, 3]");
+        }
+        if (uv_info.ndim != 2 || uv_info.shape[0] != position_info.shape[0] || uv_info.shape[1] != 2) {
+            throw std::invalid_argument("uv must have shape [vertex_count, 2]");
+        }
+        validate_indices(indices.request());
+        const auto matrix_info = world_to_clip.request();
+        const auto camera_info = camera_positions.request();
+        const auto view_count = static_cast<py::ssize_t>(images.size());
+        if (view_count <= 0 || matrix_info.ndim != 3 || matrix_info.shape[0] != view_count ||
+            matrix_info.shape[1] != 4 || matrix_info.shape[2] != 4) {
+            throw std::invalid_argument("world_to_clip must have shape [view_count, 4, 4]");
+        }
+        if (camera_info.ndim != 2 || camera_info.shape[0] != view_count || camera_info.shape[1] != 3) {
+            throw std::invalid_argument("camera_positions must have shape [view_count, 3]");
+        }
+        py::list mask_list;
+        if (!visibility_masks.is_none()) {
+            mask_list = py::cast<py::list>(visibility_masks);
+            if (mask_list.size() != view_count) {
+                throw std::invalid_argument("visibility_masks must contain one entry per view");
+            }
+        }
+        py::list viewport_list;
+        if (!viewports.is_none()) {
+            viewport_list = py::cast<py::list>(viewports);
+            if (viewport_list.size() != view_count) {
+                throw std::invalid_argument("viewports must contain one entry per view");
+            }
+        }
+
+        std::vector<ProjectionView> projection_views(static_cast<std::size_t>(view_count));
+        for (py::ssize_t index = 0; index < view_count; ++index) {
+            const auto image = py::cast<py::array_t<float, py::array::c_style | py::array::forcecast>>(images[index]);
+            const auto image_info = image.request();
+            if (image_info.ndim != 3 || image_info.shape[0] <= 0 || image_info.shape[1] <= 0 ||
+                (image_info.shape[2] != 3 && image_info.shape[2] != 4)) {
+                throw std::invalid_argument("each image must have shape [height, width, 3 or 4]");
+            }
+            auto& view = projection_views[static_cast<std::size_t>(index)];
+            view.height = static_cast<std::uint32_t>(image_info.shape[0]);
+            view.width = static_cast<std::uint32_t>(image_info.shape[1]);
+            view.channel_count = static_cast<std::uint32_t>(image_info.shape[2]);
+            view.image.assign(image.data(), image.data() + image.size());
+            std::copy_n(world_to_clip.data() + index * 16, 16, view.world_to_clip.begin());
+            std::copy_n(camera_positions.data() + index * 3, 3, view.camera_position.begin());
+            if (!visibility_masks.is_none() && !mask_list[index].is_none()) {
+                const auto mask = py::cast<py::array_t<float, py::array::c_style | py::array::forcecast>>(mask_list[index]);
+                const auto mask_info = mask.request();
+                if (mask_info.ndim != 2 || mask_info.shape[0] != image_info.shape[0] ||
+                    mask_info.shape[1] != image_info.shape[1]) {
+                    throw std::invalid_argument("each visibility mask must have shape [image_height, image_width]");
+                }
+                view.visibility_mask.assign(mask.data(), mask.data() + mask.size());
+            }
+            if (!viewports.is_none() && !viewport_list[index].is_none()) {
+                const auto value = py::cast<std::array<float, 4>>(viewport_list[index]);
+                view.viewport = Viewport{value[0], value[1], value[2], value[3]};
+            }
+        }
+        TextureBakeOptions options;
+        options.height = resolution.first;
+        options.width = resolution.second;
+        options.pcf_radius = pcf_radius;
+        options.allow_visibility_fallback = allow_visibility_fallback;
+        if (blend_mode == "best_view") {
+            options.blend_mode = ProjectionBlendMode::best_view;
+        } else if (blend_mode == "weighted_average") {
+            options.blend_mode = ProjectionBlendMode::weighted_average;
+        } else {
+            throw std::invalid_argument("blend_mode must be 'best_view' or 'weighted_average'");
+        }
+        if (visibility_mode == "shadow_map") {
+            options.visibility_mode = VisibilityMode::shadow_map;
+        } else if (visibility_mode == "hybrid_ray_query") {
+            options.visibility_mode = VisibilityMode::hybrid_ray_query;
+        } else {
+            throw std::invalid_argument("visibility_mode must be 'shadow_map' or 'hybrid_ray_query'");
+        }
+        auto output = baker_.bake(
+            as_span(positions), as_span(normals), as_span(uv), as_span(indices), projection_views, options);
+        auto color = vector_to_array(
+            std::move(output.color), {static_cast<py::ssize_t>(output.height), static_cast<py::ssize_t>(output.width), 4});
+        auto confidence = vector_to_array(
+            std::move(output.confidence), {static_cast<py::ssize_t>(output.height), static_cast<py::ssize_t>(output.width)});
+        auto source_view = vector_to_u32_array(
+            std::move(output.source_view), {static_cast<py::ssize_t>(output.height), static_cast<py::ssize_t>(output.width)});
+        auto valid_mask = vector_to_array(
+            std::move(output.valid_mask), {static_cast<py::ssize_t>(output.height), static_cast<py::ssize_t>(output.width)});
+        return py::make_tuple(
+            std::move(color), std::move(confidence), std::move(source_view), std::move(valid_mask), output.used_ray_query);
+    }
+
+    [[nodiscard]] const DeviceInfo& device_info() const noexcept { return context_.device_info(); }
+
+private:
+    Context context_;
+    TextureBaker baker_;
+};
+
 class PythonRasterizer {
 public:
     PythonRasterizer(std::uint32_t device_index, bool enable_validation)
@@ -316,6 +489,7 @@ PYBIND11_MODULE(_asdiff_render, module) {
         .def_readonly("vendor_id", &DeviceInfo::vendor_id)
         .def_readonly("device_id", &DeviceInfo::device_id)
         .def_readonly("api_version", &DeviceInfo::api_version)
+        .def_readonly("supports_ray_query", &DeviceInfo::supports_ray_query)
         .def("__repr__", [](const DeviceInfo& info) {
             return "DeviceInfo(name='" + info.name + "', vendor_id=" + std::to_string(info.vendor_id) + ")";
         });
@@ -368,6 +542,56 @@ PYBIND11_MODULE(_asdiff_render, module) {
             py::arg("raster"),
             py::arg("grad_sampled"),
             py::arg("address_mode") = "clamp");
+
+    py::class_<PythonUvAtlasResult>(module, "UvAtlasResult")
+        .def_property_readonly("positions", &PythonUvAtlasResult::positions)
+        .def_property_readonly("uv", &PythonUvAtlasResult::uv)
+        .def_property_readonly("indices", &PythonUvAtlasResult::indices)
+        .def_property_readonly("vertex_remap", &PythonUvAtlasResult::vertex_remap)
+        .def_property_readonly("face_chart_ids", &PythonUvAtlasResult::face_chart_ids)
+        .def_property_readonly("chart_count", &PythonUvAtlasResult::chart_count)
+        .def_property_readonly("max_stretch", &PythonUvAtlasResult::max_stretch);
+
+    module.def("has_uv_atlas_backend", &has_uv_atlas_backend);
+    module.def(
+        "unwrap_uv",
+        [](const py::array_t<float, py::array::c_style | py::array::forcecast>& positions,
+           const py::array_t<std::uint32_t, py::array::c_style | py::array::forcecast>& indices,
+           const std::pair<std::uint32_t, std::uint32_t>& resolution,
+           float gutter,
+           float max_stretch,
+           std::uint32_t max_chart_count,
+           bool quality) {
+            const auto info = positions.request();
+            if (info.ndim != 2 || info.shape[1] != 3 || info.shape[0] <= 0) {
+                throw std::invalid_argument("positions must have shape [vertex_count, 3]");
+            }
+            validate_indices(indices.request());
+            UvAtlasOptions options;
+            options.height = resolution.first;
+            options.width = resolution.second;
+            options.gutter = gutter;
+            options.max_stretch = max_stretch;
+            options.max_chart_count = max_chart_count;
+            options.quality = quality;
+            return PythonUvAtlasResult(asdiff_render::unwrap_uv(as_span(positions), as_span(indices), options));
+        },
+        py::arg("positions"), py::arg("indices"), py::arg("resolution") = std::pair{1024U, 1024U},
+        py::arg("gutter") = 2.0F, py::arg("max_stretch") = 0.16667F,
+        py::arg("max_chart_count") = 0, py::arg("quality") = true);
+
+    py::class_<PythonTextureBaker>(module, "TextureBaker")
+        .def(py::init<std::uint32_t, bool>(), py::arg("device_index") = 0, py::arg("enable_validation") = false)
+        .def_property_readonly("device_info", &PythonTextureBaker::device_info, py::return_value_policy::reference_internal)
+        .def(
+            "bake",
+            &PythonTextureBaker::bake,
+            py::arg("positions"), py::arg("normals"), py::arg("uv"), py::arg("indices"),
+            py::arg("images"), py::arg("world_to_clip"), py::arg("camera_positions"),
+            py::arg("visibility_masks") = py::none(), py::arg("viewports") = py::none(),
+            py::arg("resolution") = std::pair{1024U, 1024U},
+            py::arg("blend_mode") = "weighted_average", py::arg("visibility_mode") = "shadow_map",
+            py::arg("pcf_radius") = 1, py::arg("allow_visibility_fallback") = true);
 
     module.def("enumerate_devices", &Context::enumerate_devices);
 }

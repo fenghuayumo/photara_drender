@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(asdiff_render VERSION 0.2.0 LANGUAGES CXX)
+project(asdiff_render VERSION 0.3.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -8,6 +8,8 @@ include(CMakePackageConfigHelpers)
 option(ASDIFF_BUILD_PYTHON "Build the Python extension" ON)
 option(ASDIFF_BUILD_TESTS "Build native tests" ON)
 option(ASDIFF_ENABLE_VALIDATION "Enable Vulkan validation by default" OFF)
+option(ASDIFF_ENABLE_UVATLAS "Enable Microsoft UVAtlas unwrapping" ON)
+option(ASDIFF_FETCH_UVATLAS "Fetch a pinned UVAtlas source release when it is not installed" ON)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,6 +22,29 @@ find_program(ASDIFF_DXC_EXECUTABLE
     HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin"
     REQUIRED)
 
+set(ASDIFF_HAS_UVATLAS OFF)
+if(ASDIFF_ENABLE_UVATLAS)
+    find_package(uvatlas CONFIG QUIET)
+    if(TARGET Microsoft::UVAtlas)
+        set(ASDIFF_UVATLAS_TARGET Microsoft::UVAtlas)
+        set(ASDIFF_HAS_UVATLAS ON)
+    elseif(WIN32 AND ASDIFF_FETCH_UVATLAS)
+        include(FetchContent)
+        set(BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+        set(UVATLAS_USE_OPENMP OFF CACHE BOOL "" FORCE)
+        FetchContent_Declare(
+            uvatlas
+            URL https://codeload.github.com/microsoft/UVAtlas/tar.gz/refs/tags/oct2025
+            URL_HASH SHA256=13c2d0d1cbff2924a2aa1e24748ef10c161a6e54ac8eb0e5a3f42b8d54e471af
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+        FetchContent_MakeAvailable(uvatlas)
+        set(ASDIFF_UVATLAS_TARGET UVAtlas)
+        set(ASDIFF_HAS_UVATLAS ON)
+    else()
+        message(WARNING "Microsoft UVAtlas was not found; unwrap_uv() will report that the backend is unavailable")
+    endif()
+endif()
+
 set(ASDIFF_SHADER_SOURCES
     shaders/rasterize_forward.hlsl
     shaders/rasterize_backward.hlsl
@@ -30,19 +55,29 @@ set(ASDIFF_SHADER_SOURCES
     shaders/texture_forward.hlsl
     shaders/texture_grad_texture.hlsl
     shaders/texture_grad_uv.hlsl)
+list(APPEND ASDIFF_SHADER_SOURCES
+    shaders/project_texture.hlsl
+    shaders/project_ray_visibility.hlsl)
 
 set(ASDIFF_SHADER_BINARIES)
 set(ASDIFF_SHADER_EMBEDDED_HEADERS)
 foreach(shader IN LISTS ASDIFF_SHADER_SOURCES)
     get_filename_component(shader_name "${shader}" NAME)
     set(shader_binary "${CMAKE_CURRENT_BINARY_DIR}/shaders/${shader_name}.spv")
+    set(shader_profile cs_6_0)
+    set(shader_extra_options)
+    if(shader_name STREQUAL "project_ray_visibility.hlsl")
+        set(shader_profile cs_6_5)
+        list(APPEND shader_extra_options -fspv-extension=SPV_KHR_ray_query)
+    endif()
     add_custom_command(
         OUTPUT "${shader_binary}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/shaders"
         COMMAND "${ASDIFF_DXC_EXECUTABLE}"
-                -spirv -T cs_6_0 -E main -O3
+                -spirv -T ${shader_profile} -E main -O3
                 -fspv-target-env=vulkan1.2
                 -fvk-use-dx-layout
+                ${shader_extra_options}
                 "${CMAKE_CURRENT_SOURCE_DIR}/${shader}"
                 -Fo "${shader_binary}"
         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${shader}"
@@ -67,7 +102,9 @@ add_custom_target(asdiff_shaders DEPENDS ${ASDIFF_SHADER_BINARIES} ${ASDIFF_SHAD
 
 add_library(asdiff_render
     src/context.cpp
-    src/rasterizer.cpp)
+    src/rasterizer.cpp
+    src/texture_baker.cpp
+    src/uv_atlas.cpp)
 add_library(asdiff::render ALIAS asdiff_render)
 add_dependencies(asdiff_render asdiff_shaders)
 set_target_properties(asdiff_render PROPERTIES EXPORT_NAME render)
@@ -79,9 +116,13 @@ target_include_directories(asdiff_render
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>)
 target_link_libraries(asdiff_render PUBLIC Vulkan::Vulkan)
+if(ASDIFF_HAS_UVATLAS)
+    target_link_libraries(asdiff_render PRIVATE ${ASDIFF_UVATLAS_TARGET})
+endif()
 target_compile_definitions(asdiff_render
     PRIVATE
-        ASDIFF_ENABLE_VALIDATION=$<BOOL:${ASDIFF_ENABLE_VALIDATION}>)
+        ASDIFF_ENABLE_VALIDATION=$<BOOL:${ASDIFF_ENABLE_VALIDATION}>
+        ASDIFF_HAS_UVATLAS=$<BOOL:${ASDIFF_HAS_UVATLAS}>)
 
 if(MSVC)
     target_compile_options(asdiff_render PRIVATE /W4 /permissive- /EHsc)
@@ -115,6 +156,10 @@ if(ASDIFF_BUILD_PYTHON)
         "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/atlas.py"
         "${CMAKE_CURRENT_BINARY_DIR}/python/asdiff_render/atlas.py"
         COPYONLY)
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/baking.py"
+        "${CMAKE_CURRENT_BINARY_DIR}/python/asdiff_render/baking.py"
+        COPYONLY)
 
     pybind11_add_module(_asdiff_render python/bindings.cpp)
     target_link_libraries(_asdiff_render PRIVATE asdiff::render Python::NumPy)
@@ -137,6 +182,9 @@ if(ASDIFF_BUILD_PYTHON)
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/atlas.py"
                 "$<TARGET_FILE_DIR:_asdiff_render>/atlas.py"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/baking.py"
+                "$<TARGET_FILE_DIR:_asdiff_render>/baking.py"
         COMMAND "${CMAKE_COMMAND}" -E make_directory
                 "$<TARGET_FILE_DIR:_asdiff_render>/shaders")
     foreach(shader_binary IN LISTS ASDIFF_SHADER_BINARIES)
@@ -165,16 +213,24 @@ endif()
 
 install(TARGETS asdiff_render EXPORT asdiff_render_targets)
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(
+    FILES LICENSE THIRD_PARTY_NOTICES.md third_party/UVAtlas.LICENSE
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/asdiff_render)
 install(FILES ${ASDIFF_SHADER_BINARIES} DESTINATION ${CMAKE_INSTALL_DATADIR}/asdiff_render/shaders)
+if(ASDIFF_HAS_UVATLAS)
+    set(ASDIFF_UVATLAS_CONFIG_DEPENDENCY "find_dependency(uvatlas CONFIG)")
+else()
+    set(ASDIFF_UVATLAS_CONFIG_DEPENDENCY "")
+endif()
+configure_package_config_file(
+    cmake/asdiff_renderConfig.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/asdiff_renderConfig.cmake"
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/asdiff_render)
 install(
     EXPORT asdiff_render_targets
     FILE asdiff_renderTargets.cmake
     NAMESPACE asdiff::
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/asdiff_render)
-configure_package_config_file(
-    cmake/asdiff_renderConfig.cmake.in
-    "${CMAKE_CURRENT_BINARY_DIR}/asdiff_renderConfig.cmake"
-    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/asdiff_render)
 write_basic_package_version_file(
     "${CMAKE_CURRENT_BINARY_DIR}/asdiff_renderConfigVersion.cmake"
     VERSION ${PROJECT_VERSION}

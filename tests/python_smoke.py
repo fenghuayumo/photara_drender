@@ -20,6 +20,30 @@ def main() -> None:
     assert grad_positions.shape == positions.shape
     assert np.isfinite(grad_positions).all()
 
+    world_positions = positions[:, :3].copy()
+    unwrapped = asdiff_render.unwrap_mesh_uv(world_positions, indices, resolution=(64, 64))
+    assert unwrapped.positions.shape[1] == 3 and unwrapped.uv.shape[1] == 2
+    assert unwrapped.indices.shape == indices.shape
+    assert unwrapped.face_chart_ids.shape == (indices.shape[0],)
+    image = np.zeros((16, 16, 4), dtype=np.float32)
+    image[..., 0] = 0.75
+    image[..., 1] = 0.25
+    image[..., 3] = 1.0
+    matrix = np.eye(4, dtype=np.float32)[None]
+    camera_positions = np.array([[0.0, 0.0, 2.0]], dtype=np.float32)
+    baked = asdiff_render.project_texture_atlas(
+        unwrapped,
+        [image],
+        matrix,
+        camera_positions,
+        resolution=(16, 16),
+        visibility_mode="hybrid_ray_query",
+    )
+    assert baked.color.shape == (16, 16, 4)
+    assert baked.valid_mask.any()
+    if rasterizer.device_info.supports_ray_query:
+        assert baked.used_ray_query
+
     attributes = np.eye(3, dtype=np.float32)
     interpolated = rasterizer.interpolate_forward(attributes, indices, raster)
     assert interpolated.shape == (16, 20, 3)

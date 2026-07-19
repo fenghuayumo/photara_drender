@@ -1,4 +1,5 @@
 /build/
+/build_v*/
 /.venv/
 /.pytest_cache/
 /dist/
@@ -6,4 +7,3 @@
 __pycache__/
 *.py[cod]
 *.spv
-

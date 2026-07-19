@@ -153,6 +153,77 @@ int main() {
         require(std::ranges::all_of(viewport_gradient, [](float value) { return std::isfinite(value); }),
                 "Viewport position gradient contains non-finite values");
 
+        const std::vector<float> world_positions{
+            -0.75F, -0.75F, 0.0F,
+             0.75F, -0.75F, 0.0F,
+             0.00F,  0.75F, 0.0F,
+        };
+        const std::vector<float> world_normals{
+            0.0F, 0.0F, 1.0F,
+            0.0F, 0.0F, 1.0F,
+            0.0F, 0.0F, 1.0F,
+        };
+        const std::vector<float> bake_uv{
+            0.125F, 0.125F,
+            0.875F, 0.125F,
+            0.500F, 0.875F,
+        };
+        if (asdiff_render::has_uv_atlas_backend()) {
+            asdiff_render::UvAtlasOptions unwrap_options;
+            unwrap_options.width = 64;
+            unwrap_options.height = 64;
+            unwrap_options.gutter = 2.0F;
+            const auto unwrapped = asdiff_render::unwrap_uv(world_positions, indices, unwrap_options);
+            require(!unwrapped.positions.empty() && unwrapped.uv.size() / 2 == unwrapped.positions.size() / 3,
+                    "UVAtlas returned invalid vertex data");
+            require(unwrapped.indices.size() == indices.size(), "UVAtlas returned an invalid index count");
+            require(unwrapped.face_chart_ids.size() == indices.size() / 3, "UVAtlas omitted face chart IDs");
+        }
+
+        asdiff_render::ProjectionView projection_view;
+        projection_view.width = 16;
+        projection_view.height = 16;
+        projection_view.channel_count = 4;
+        projection_view.image.resize(16 * 16 * 4);
+        for (std::size_t pixel = 0; pixel < 16 * 16; ++pixel) {
+            projection_view.image[pixel * 4 + 0] = 0.8F;
+            projection_view.image[pixel * 4 + 1] = 0.2F;
+            projection_view.image[pixel * 4 + 2] = 0.1F;
+            projection_view.image[pixel * 4 + 3] = 1.0F;
+        }
+        projection_view.world_to_clip = {
+            1.0F, 0.0F, 0.0F, 0.0F,
+            0.0F, 1.0F, 0.0F, 0.0F,
+            0.0F, 0.0F, 1.0F, 0.0F,
+            0.0F, 0.0F, 0.0F, 1.0F,
+        };
+        projection_view.camera_position = {0.0F, 0.0F, 2.0F};
+        asdiff_render::TextureBakeOptions bake_options;
+        bake_options.width = 16;
+        bake_options.height = 16;
+        bake_options.blend_mode = asdiff_render::ProjectionBlendMode::weighted_average;
+        asdiff_render::TextureBaker texture_baker(context);
+        const auto baked = texture_baker.bake(
+            world_positions, world_normals, bake_uv, indices,
+            std::span<const asdiff_render::ProjectionView>(&projection_view, 1), bake_options);
+        require(baked.color.size() == 16 * 16 * 4, "Unexpected baked atlas size");
+        require(std::ranges::any_of(baked.valid_mask, [](float value) { return value > 0.5F; }),
+                "Texture projection did not produce valid atlas texels");
+        const auto first_valid = std::ranges::find_if(baked.valid_mask, [](float value) { return value > 0.5F; });
+        const auto valid_index = static_cast<std::size_t>(first_valid - baked.valid_mask.begin());
+        require(std::abs(baked.color[valid_index * 4 + 0] - 0.8F) < 1e-4F,
+                "Texture projection returned an incorrect color");
+        if (context.device_info().supports_ray_query) {
+            bake_options.visibility_mode = asdiff_render::VisibilityMode::hybrid_ray_query;
+            bake_options.allow_visibility_fallback = false;
+            const auto ray_baked = texture_baker.bake(
+                world_positions, world_normals, bake_uv, indices,
+                std::span<const asdiff_render::ProjectionView>(&projection_view, 1), bake_options);
+            require(ray_baked.used_ray_query, "Hybrid texture projection did not use Vulkan ray queries");
+            require(std::ranges::any_of(ray_baked.valid_mask, [](float value) { return value > 0.5F; }),
+                    "Ray-query texture projection rejected every visible texel");
+        }
+
         std::cout << "device=" << context.device_info().name << '\n';
         std::cout << "finite_difference=" << numerical_gradient
                   << " analytical=" << analytical_gradient[0] << '\n';

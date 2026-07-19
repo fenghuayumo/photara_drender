@@ -4,6 +4,8 @@
 
 - `asdiff_render::Context` owns the Vulkan instance, selected compute device, queue, command pool, and descriptor pool.
 - `asdiff_render::Rasterizer` owns immutable compute pipelines and exposes rasterization and interpolation forward/backward APIs.
+- `asdiff_render::TextureBaker` composes atlas rasterization, camera shadow maps, HLSL projection, and optional Vulkan
+  ray-query visibility.
 - `_asdiff_render` maps contiguous NumPy arrays to the C++ API with shape and range validation.
 - `asdiff_render.torch` composes the native calls into PyTorch autograd functions without linking to a particular PyTorch ABI.
 
@@ -37,6 +39,14 @@ a deterministic Vulkan reduction, avoiding floating-point atomics while keeping 
 
 The Python atlas layer composes rasterization, UV interpolation, and texture sampling. It includes masked Charbonnier loss,
 chart-aware total variation, seam-pair consistency, viewport-aware multi-view rendering, and an Adam optimization loop.
+
+## UV unwrapping and texture projection
+
+The optional Microsoft UVAtlas backend partitions and packs triangle meshes on the CPU while retaining vertex remaps and
+face chart IDs. Texture baking rasterizes UVs to an atlas G-buffer, rasterizes each camera to a depth shadow buffer, then
+projects photos per atlas texel with PCF visibility and view-angle confidence. A hybrid mode builds Vulkan BLAS/TLAS objects
+and executes inline ray queries before accepting shadow-visible samples. Projection is intentionally a non-differentiable
+initialization stage; its float atlas output feeds the differentiable texture optimizer.
 
 ## Synchronization and portability
 
