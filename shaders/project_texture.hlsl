@@ -141,7 +141,16 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     const uint blend_mode = (packed >> 8u) & 0xffu;
     const uint pcf_radius = (packed >> 16u) & 0xffu;
     const bool has_photo_mask = ((packed >> 24u) & 1u) != 0;
-    float visibility = shadow_visibility(pixel_position, ndc.z, pcf_radius) * ray_visibility[pixel_index];
+    const uint visibility_mode = (packed >> 25u) & 0x3u;
+    float visibility = ray_visibility[pixel_index];
+    if (visibility_mode == 0u)
+    {
+        visibility = shadow_visibility(pixel_position, ndc.z, pcf_radius);
+    }
+    else if (visibility_mode == 1u)
+    {
+        visibility *= shadow_visibility(pixel_position, ndc.z, pcf_radius);
+    }
     if (has_photo_mask)
     {
         visibility *= saturate(sample_mask(pixel_position));

@@ -95,6 +95,7 @@ enum class ProjectionBlendMode : std::uint32_t {
 enum class VisibilityMode : std::uint32_t {
     shadow_map = 0,
     hybrid_ray_query = 1,
+    ray_query = 2,
 };
 
 struct UvAtlasOptions {
@@ -151,6 +152,34 @@ struct TextureBakeOutput {
     std::vector<std::uint32_t> source_view;
     std::vector<float> valid_mask;
     bool used_ray_query = false;
+};
+
+struct TextureRefineOptions {
+    std::uint32_t width = 1024;
+    std::uint32_t height = 1024;
+    std::uint32_t steps = 1000;
+    std::uint32_t batch_size = 4;
+    float learning_rate = 5e-3F;
+    float minimum_learning_rate = 2.5e-4F;
+    float photometric_epsilon = 1e-3F;
+    float adam_beta1 = 0.9F;
+    float adam_beta2 = 0.999F;
+    float adam_epsilon = 1e-8F;
+    float clamp_min = 0.0F;
+    float clamp_max = 1.0F;
+    std::uint32_t seam_polish_steps = 30;
+    float seam_learning_rate = 1e-3F;
+    float seam_epsilon = 1e-4F;
+};
+
+struct TextureRefineOutput {
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::vector<float> color;
+    std::vector<float> loss_history;
+    std::vector<float> seam_loss_history;
+    double precompute_seconds = 0.0;
+    double optimization_seconds = 0.0;
 };
 
 } // namespace asdiff_render

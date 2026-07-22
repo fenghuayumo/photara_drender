@@ -27,6 +27,7 @@ private:
 
     friend class Rasterizer;
     friend class TextureBaker;
+    friend class TextureRefiner;
 };
 
 } // namespace asdiff_render

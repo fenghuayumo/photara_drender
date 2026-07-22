@@ -60,7 +60,10 @@ set(ASDIFF_SHADER_SOURCES
     shaders/texture_grad_uv.hlsl)
 list(APPEND ASDIFF_SHADER_SOURCES
     shaders/project_texture.hlsl
-    shaders/project_ray_visibility.hlsl)
+    shaders/project_ray_visibility.hlsl
+    shaders/atlas_photometric_gradient.hlsl
+    shaders/atlas_seam_gradient.hlsl
+    shaders/atlas_adam_update.hlsl)
 
 set(ASDIFF_SHADER_BINARIES)
 set(ASDIFF_SHADER_EMBEDDED_HEADERS)
@@ -72,6 +75,8 @@ foreach(shader IN LISTS ASDIFF_SHADER_SOURCES)
     if(shader_name STREQUAL "project_ray_visibility.hlsl")
         set(shader_profile cs_6_5)
         list(APPEND shader_extra_options -fspv-extension=SPV_KHR_ray_query)
+    elseif(shader_name STREQUAL "atlas_photometric_gradient.hlsl")
+        set(shader_profile cs_6_6)
     endif()
     add_custom_command(
         OUTPUT "${shader_binary}"
@@ -107,6 +112,7 @@ add_library(asdiff_render
     src/context.cpp
     src/rasterizer.cpp
     src/texture_baker.cpp
+    src/texture_refiner.cpp
     src/uv_atlas.cpp)
 add_library(asdiff::render ALIAS asdiff_render)
 add_dependencies(asdiff_render asdiff_shaders)

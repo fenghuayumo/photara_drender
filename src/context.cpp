@@ -20,6 +20,9 @@
 #include "texture_grad_uv.hlsl.embedded.hpp"
 #include "project_texture.hlsl.embedded.hpp"
 #include "project_ray_visibility.hlsl.embedded.hpp"
+#include "atlas_photometric_gradient.hlsl.embedded.hpp"
+#include "atlas_seam_gradient.hlsl.embedded.hpp"
+#include "atlas_adam_update.hlsl.embedded.hpp"
 
 namespace asdiff_render {
 namespace {
@@ -45,6 +48,21 @@ std::uint32_t find_memory_type(
         }
     }
     throw std::runtime_error("No compatible Vulkan memory type was found");
+}
+
+std::optional<std::uint32_t> try_find_memory_type(
+    VkPhysicalDevice physical_device,
+    std::uint32_t type_bits,
+    VkMemoryPropertyFlags required_flags) {
+    VkPhysicalDeviceMemoryProperties properties{};
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &properties);
+    for (std::uint32_t i = 0; i < properties.memoryTypeCount; ++i) {
+        if ((type_bits & (1U << i)) != 0 &&
+            (properties.memoryTypes[i].propertyFlags & required_flags) == required_flags) {
+            return i;
+        }
+    }
+    return std::nullopt;
 }
 
 std::vector<std::byte> read_spir_v(const std::filesystem::path& path) {
@@ -111,6 +129,15 @@ std::span<const std::byte> embedded_shader(const std::string& shader_name) {
     }
     if (shader_name == "project_ray_visibility.hlsl.spv") {
         return std::as_bytes(std::span{project_ray_visibility_hlsl_spv});
+    }
+    if (shader_name == "atlas_photometric_gradient.hlsl.spv") {
+        return std::as_bytes(std::span{atlas_photometric_gradient_hlsl_spv});
+    }
+    if (shader_name == "atlas_seam_gradient.hlsl.spv") {
+        return std::as_bytes(std::span{atlas_seam_gradient_hlsl_spv});
+    }
+    if (shader_name == "atlas_adam_update.hlsl.spv") {
+        return std::as_bytes(std::span{atlas_adam_update_hlsl_spv});
     }
     throw std::invalid_argument("Unknown embedded shader: " + shader_name);
 }
@@ -211,7 +238,8 @@ Buffer::Buffer(
     VkPhysicalDevice physical_device,
     VkDevice logical_device,
     VkDeviceSize byte_size,
-    VkBufferUsageFlags usage)
+    VkBufferUsageFlags usage,
+    bool prefer_device_local)
     : device(logical_device), size(std::max<VkDeviceSize>(byte_size, 4)) {
     VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     buffer_info.size = size;
@@ -223,10 +251,13 @@ Buffer::Buffer(
     vkGetBufferMemoryRequirements(device, handle, &requirements);
     VkMemoryAllocateInfo allocation_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     allocation_info.allocationSize = requirements.size;
-    allocation_info.memoryTypeIndex = find_memory_type(
-        physical_device,
-        requirements.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    constexpr auto host_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    const auto preferred_type = prefer_device_local
+        ? try_find_memory_type(
+              physical_device, requirements.memoryTypeBits, host_flags | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+        : std::nullopt;
+    allocation_info.memoryTypeIndex = preferred_type.value_or(
+        find_memory_type(physical_device, requirements.memoryTypeBits, host_flags));
     VkMemoryAllocateFlagsInfo allocation_flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
     if ((usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) != 0) {
         allocation_flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
@@ -534,8 +565,11 @@ Context::Impl::~Impl() {
     }
 }
 
-Buffer Context::Impl::create_buffer(VkDeviceSize size, VkBufferUsageFlags usage) const {
-    return Buffer(physical_device, device, size, usage);
+Buffer Context::Impl::create_buffer(
+    VkDeviceSize size,
+    VkBufferUsageFlags usage,
+    bool prefer_device_local) const {
+    return Buffer(physical_device, device, size, usage, prefer_device_local);
 }
 
 ComputePipeline Context::Impl::create_pipeline(

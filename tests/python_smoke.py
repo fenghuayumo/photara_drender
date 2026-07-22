@@ -50,12 +50,31 @@ def main() -> None:
         matrix,
         camera_positions,
         resolution=(16, 16),
-        visibility_mode="hybrid_ray_query",
+        visibility_mode="ray_query",
     )
     assert baked.color.shape == (16, 16, 4)
     assert baked.valid_mask.any()
     if rasterizer.device_info.supports_ray_query:
         assert baked.used_ray_query
+    native_baker = asdiff_render.TextureBaker()
+    refined, refine_history, seam_history, precompute_seconds, optimization_seconds = native_baker.refine_texture(
+        np.ascontiguousarray(baked.color[..., :3] * 0.5),
+        unwrapped.positions,
+        unwrapped.uv,
+        unwrapped.indices,
+        [image],
+        matrix,
+        steps=3,
+        batch_size=1,
+        learning_rate=0.05,
+        minimum_learning_rate=0.01,
+        seam_polish_steps=0,
+    )
+    assert refined.shape == (16, 16, 3)
+    assert refine_history.shape == (3,) and np.isfinite(refine_history).all()
+    assert refine_history[-1] < refine_history[0]
+    assert seam_history.shape == (0,)
+    assert precompute_seconds >= 0.0 and optimization_seconds >= 0.0
     padded = asdiff_render.pad_texture_atlas(baked.color, baked.valid_mask, 2)
     assert padded.shape == baked.color.shape
     assert np.count_nonzero(padded[..., :3]) >= np.count_nonzero(baked.color[..., :3])

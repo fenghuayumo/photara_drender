@@ -8,11 +8,10 @@ The baking pipeline has four stages:
    `vertex_remap`; per-face chart IDs are preserved for seam-aware optimization.
 2. The Vulkan rasterizer renders UV coordinates into atlas space and interpolates world-space position and normal for every
    covered texel.
-3. Each calibrated view is rasterized into a camera-space depth buffer. The projection HLSL kernel performs bilinear photo
-   sampling, PCF depth testing, optional photo-mask testing, and view-angle confidence evaluation.
-4. In `hybrid_ray_query` mode, a Vulkan BLAS/TLAS is built for the mesh. Inline ray queries from atlas surface points to the
-   camera reject occlusion that survives the finite-resolution shadow map. Devices without ray-query support can fall back
-   to the shadow path.
+3. In the default `ray_query` quality mode, a Vulkan BLAS/TLAS is built for the mesh. Inline ray queries from atlas surface
+   points to each camera are the authoritative visibility test; no shadow map is generated or sampled.
+4. `shadow_map` remains the portable fallback. The legacy `hybrid_ray_query` mode combines both tests for compatibility,
+   but its finite-resolution PCF test can reject samples that an exact ray query considers visible.
 
 `best_view` keeps the highest-confidence photograph per texel. `weighted_average` accumulates all visible samples and is
 usually a better initialization for subsequent differentiable optimization. `source_view` always records the strongest
@@ -56,8 +55,8 @@ can be rasterized into `chart_ids` for the differentiable optimizer so total var
 ## Vulkan capability behavior
 
 `DeviceInfo.supports_ray_query` reports the combined availability of buffer device address, acceleration structures, and
-ray query. `hybrid_ray_query` uses all three when available. Set `allow_visibility_fallback=False` to require the ray path;
-otherwise unsupported devices use PCF shadow maps and return `used_ray_query=False`.
+ray query. `ray_query` uses all three without generating a shadow map. Set `allow_visibility_fallback=False` to require the
+ray path; otherwise unsupported devices use PCF shadow maps and return `used_ray_query=False`.
 
 The core renderer and shadow-map projection remain Vulkan 1.2 portable. Microsoft UVAtlas is an optional CPU build-time
 backend: Windows can fetch the pinned release automatically; Linux builds can provide the `uvatlas`, DirectXMath, and
@@ -69,12 +68,12 @@ Projection-valid texels do not cover the empty gutter around every UV chart. Use
 `project_texture_atlas()` (or `pad_texture_atlas()` on an existing bake) before filtered rendering or model export. The
 projection-valid mask remains unchanged, while RGB and alpha guard texels are extended into the gutter.
 
-`examples/refine_colmap_texture.py` refines an initial bake by rendering it back into the calibrated photographs. It
-combines the foreground masks with a photometric loss, chart-aware total variation, dense corresponding samples along UV
-seams, an initial-atlas prior, and a final seam-only polish. An optional raster cache avoids repeating mesh rasterization
-and UV interpolation when a camera is revisited, but it is disabled by default because 4K atlas staging and optimizer
-updates dominate this version's runtime while cached per-view buffers consume substantial host memory.
+`examples/refine_colmap_texture.py` uses the native C++ `TextureRefiner`. Camera rasters, interpolated UVs, photographs,
+masks, the 4K texture, gradients, and both Adam moments are allocated once in persistent Vulkan buffers (preferring a
+host-visible device-local memory type). The complete optimization command stream is recorded and submitted once; texture
+and loss histories are downloaded only after the queue finishes. PyTorch is not involved in this path.
 
-The default refinement profile performs one photograph step per calibrated view and then 30 inexpensive seam-only steps.
-For a stronger two-pass profile, use `--steps 152 --tv-weight 1e-5 --prior-weight 0.05`; per-step seam loss is normally left
-at zero because the final seam polish avoids downloading a second full-atlas gradient during every photograph step.
+The default high-quality profile performs 1000 mini-batch photometric Adam steps with a cosine learning-rate schedule,
+then resets the Adam state and performs native seam-only polish. Pixel-to-atlas gradients use portable uint
+compare/exchange to atomically accumulate IEEE float values, avoiding a dependency on optional float-atomic extensions.
+The older `optimize_texture_atlas()` PyTorch adapter remains available for research code needing its general autograd API.

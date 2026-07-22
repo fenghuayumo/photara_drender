@@ -68,7 +68,7 @@ def main() -> None:
         projection.camera_positions,
         visibility_masks=masks,
         resolution=(arguments.resolution, arguments.resolution),
-        visibility_mode="hybrid_ray_query",
+        visibility_mode="ray_query",
         device_index=arguments.device_index,
         padding=arguments.padding,
     )

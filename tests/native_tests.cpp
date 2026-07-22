@@ -259,12 +259,12 @@ int main() {
         require(std::abs(baked.color[valid_index * 4 + 0] - 0.8F) < 1e-4F,
                 "Texture projection returned an incorrect color");
         if (context.device_info().supports_ray_query) {
-            bake_options.visibility_mode = asdiff_render::VisibilityMode::hybrid_ray_query;
+            bake_options.visibility_mode = asdiff_render::VisibilityMode::ray_query;
             bake_options.allow_visibility_fallback = false;
             const auto ray_baked = texture_baker.bake(
                 world_positions, world_normals, bake_uv, indices,
                 std::span<const asdiff_render::ProjectionView>(&projection_view, 1), bake_options);
-            require(ray_baked.used_ray_query, "Hybrid texture projection did not use Vulkan ray queries");
+            require(ray_baked.used_ray_query, "Texture projection did not use Vulkan ray queries");
             require(std::ranges::any_of(ray_baked.valid_mask, [](float value) { return value > 0.5F; }),
                     "Ray-query texture projection rejected every visible texel");
         }

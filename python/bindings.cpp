@@ -126,7 +126,7 @@ private:
 class PythonTextureBaker {
 public:
     PythonTextureBaker(std::uint32_t device_index, bool enable_validation)
-        : context_(ContextOptions{device_index, enable_validation}), baker_(context_) {}
+        : context_(ContextOptions{device_index, enable_validation}), baker_(context_), refiner_(context_) {}
 
     py::tuple bake(
         const py::array_t<float, py::array::c_style | py::array::forcecast>& positions,
@@ -226,8 +226,11 @@ public:
             options.visibility_mode = VisibilityMode::shadow_map;
         } else if (visibility_mode == "hybrid_ray_query") {
             options.visibility_mode = VisibilityMode::hybrid_ray_query;
+        } else if (visibility_mode == "ray_query") {
+            options.visibility_mode = VisibilityMode::ray_query;
         } else {
-            throw std::invalid_argument("visibility_mode must be 'shadow_map' or 'hybrid_ray_query'");
+            throw std::invalid_argument(
+                "visibility_mode must be 'shadow_map', 'hybrid_ray_query', or 'ray_query'");
         }
         auto output = baker_.bake(
             as_span(positions), as_span(normals), as_span(uv), as_span(indices), projection_views, options);
@@ -243,11 +246,129 @@ public:
             std::move(color), std::move(confidence), std::move(source_view), std::move(valid_mask), output.used_ray_query);
     }
 
+    py::tuple refine_texture(
+        const py::array_t<float, py::array::c_style | py::array::forcecast>& initial_texture,
+        const py::array_t<float, py::array::c_style | py::array::forcecast>& positions,
+        const py::array_t<float, py::array::c_style | py::array::forcecast>& uv,
+        const py::array_t<std::uint32_t, py::array::c_style | py::array::forcecast>& indices,
+        const py::list& images,
+        const py::array_t<float, py::array::c_style | py::array::forcecast>& world_to_clip,
+        const py::object& visibility_masks,
+        const py::object& viewports,
+        const py::object& seam_uv_pairs,
+        std::uint32_t steps,
+        std::uint32_t batch_size,
+        float learning_rate,
+        float minimum_learning_rate,
+        float photometric_epsilon,
+        std::uint32_t seam_polish_steps,
+        float seam_learning_rate) {
+        const auto texture_info = initial_texture.request();
+        if (texture_info.ndim != 3 || texture_info.shape[0] <= 0 || texture_info.shape[1] <= 0 ||
+            texture_info.shape[2] != 3) {
+            throw std::invalid_argument("initial_texture must have shape [height, width, 3]");
+        }
+        const auto position_info = positions.request();
+        const auto uv_info = uv.request();
+        if (position_info.ndim != 2 || position_info.shape[0] <= 0 || position_info.shape[1] != 3 ||
+            uv_info.ndim != 2 || uv_info.shape[0] != position_info.shape[0] || uv_info.shape[1] != 2) {
+            throw std::invalid_argument("positions and uv must have shapes [vertex_count, 3] and [vertex_count, 2]");
+        }
+        validate_indices(indices.request());
+        const auto matrix_info = world_to_clip.request();
+        const auto view_count = static_cast<py::ssize_t>(images.size());
+        if (view_count <= 0 || matrix_info.ndim != 3 || matrix_info.shape[0] != view_count ||
+            matrix_info.shape[1] != 4 || matrix_info.shape[2] != 4) {
+            throw std::invalid_argument("world_to_clip must have shape [view_count, 4, 4]");
+        }
+        py::list mask_list;
+        if (!visibility_masks.is_none()) {
+            mask_list = py::cast<py::list>(visibility_masks);
+            if (mask_list.size() != view_count) {
+                throw std::invalid_argument("visibility_masks must contain one entry per view");
+            }
+        }
+        py::list viewport_list;
+        if (!viewports.is_none()) {
+            viewport_list = py::cast<py::list>(viewports);
+            if (viewport_list.size() != view_count) {
+                throw std::invalid_argument("viewports must contain one entry per view");
+            }
+        }
+        std::vector<ProjectionView> projection_views(static_cast<std::size_t>(view_count));
+        for (py::ssize_t index = 0; index < view_count; ++index) {
+            const auto image = py::cast<py::array_t<float, py::array::c_style | py::array::forcecast>>(images[index]);
+            const auto image_info = image.request();
+            if (image_info.ndim != 3 || image_info.shape[0] <= 0 || image_info.shape[1] <= 0 ||
+                (image_info.shape[2] != 3 && image_info.shape[2] != 4)) {
+                throw std::invalid_argument("each image must have shape [height, width, 3 or 4]");
+            }
+            auto& view = projection_views[static_cast<std::size_t>(index)];
+            view.height = static_cast<std::uint32_t>(image_info.shape[0]);
+            view.width = static_cast<std::uint32_t>(image_info.shape[1]);
+            view.channel_count = static_cast<std::uint32_t>(image_info.shape[2]);
+            view.image.assign(image.data(), image.data() + image.size());
+            std::copy_n(world_to_clip.data() + index * 16, 16, view.world_to_clip.begin());
+            if (!visibility_masks.is_none() && !mask_list[index].is_none()) {
+                const auto mask = py::cast<py::array_t<float, py::array::c_style | py::array::forcecast>>(mask_list[index]);
+                const auto mask_info = mask.request();
+                if (mask_info.ndim != 2 || mask_info.shape[0] != image_info.shape[0] ||
+                    mask_info.shape[1] != image_info.shape[1]) {
+                    throw std::invalid_argument("each visibility mask must match its image dimensions");
+                }
+                view.visibility_mask.assign(mask.data(), mask.data() + mask.size());
+            }
+            if (!viewports.is_none() && !viewport_list[index].is_none()) {
+                const auto value = py::cast<std::array<float, 4>>(viewport_list[index]);
+                view.viewport = Viewport{value[0], value[1], value[2], value[3]};
+            }
+        }
+        TextureRefineOptions options;
+        options.height = static_cast<std::uint32_t>(texture_info.shape[0]);
+        options.width = static_cast<std::uint32_t>(texture_info.shape[1]);
+        options.steps = steps;
+        options.batch_size = batch_size;
+        options.learning_rate = learning_rate;
+        options.minimum_learning_rate = minimum_learning_rate;
+        options.photometric_epsilon = photometric_epsilon;
+        options.seam_polish_steps = seam_polish_steps;
+        options.seam_learning_rate = seam_learning_rate;
+        py::array_t<float, py::array::c_style | py::array::forcecast> seam_array;
+        std::span<const float> seam_span;
+        if (!seam_uv_pairs.is_none()) {
+            seam_array = py::cast<py::array_t<float, py::array::c_style | py::array::forcecast>>(seam_uv_pairs);
+            const auto seam_info = seam_array.request();
+            if (seam_info.ndim != 3 || seam_info.shape[1] != 2 || seam_info.shape[2] != 2) {
+                throw std::invalid_argument("seam_uv_pairs must have shape [pair_count, 2, 2]");
+            }
+            seam_span = as_span(seam_array);
+        }
+        TextureRefineOutput output;
+        {
+            py::gil_scoped_release release;
+            output = refiner_.refine(
+                as_span(initial_texture), as_span(positions), as_span(uv), as_span(indices),
+                projection_views, seam_span, options);
+        }
+        auto color = vector_to_array(
+            std::move(output.color),
+            {static_cast<py::ssize_t>(output.height), static_cast<py::ssize_t>(output.width), 3});
+        auto history = vector_to_array(
+            std::move(output.loss_history), {static_cast<py::ssize_t>(options.steps)});
+        const auto seam_history_size = static_cast<py::ssize_t>(output.seam_loss_history.size());
+        auto seam_history = vector_to_array(
+            std::move(output.seam_loss_history), {seam_history_size});
+        return py::make_tuple(
+            std::move(color), std::move(history), std::move(seam_history),
+            output.precompute_seconds, output.optimization_seconds);
+    }
+
     [[nodiscard]] const DeviceInfo& device_info() const noexcept { return context_.device_info(); }
 
 private:
     Context context_;
     TextureBaker baker_;
+    TextureRefiner refiner_;
 };
 
 class PythonRasterizer {
@@ -603,7 +724,18 @@ PYBIND11_MODULE(_asdiff_render, module) {
             py::arg("visibility_masks") = py::none(), py::arg("viewports") = py::none(),
             py::arg("resolution") = std::pair{1024U, 1024U},
             py::arg("blend_mode") = "weighted_average", py::arg("visibility_mode") = "shadow_map",
-            py::arg("pcf_radius") = 1, py::arg("allow_visibility_fallback") = true);
+            py::arg("pcf_radius") = 1, py::arg("allow_visibility_fallback") = true)
+        .def(
+            "refine_texture",
+            &PythonTextureBaker::refine_texture,
+            py::arg("initial_texture"), py::arg("positions"), py::arg("uv"), py::arg("indices"),
+            py::arg("images"), py::arg("world_to_clip"),
+            py::arg("visibility_masks") = py::none(), py::arg("viewports") = py::none(),
+            py::arg("seam_uv_pairs") = py::none(),
+            py::arg("steps") = 1000, py::arg("batch_size") = 4,
+            py::arg("learning_rate") = 5e-3F, py::arg("minimum_learning_rate") = 2.5e-4F,
+            py::arg("photometric_epsilon") = 1e-3F,
+            py::arg("seam_polish_steps") = 30, py::arg("seam_learning_rate") = 1e-3F);
 
     module.def("enumerate_devices", &Context::enumerate_devices);
 }

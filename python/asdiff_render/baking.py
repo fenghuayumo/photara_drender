@@ -156,12 +156,12 @@ def project_texture_atlas(
     viewports: Optional[Sequence[Optional[Sequence[float]]]] = None,
     resolution: Tuple[int, int] = (1024, 1024),
     blend_mode: str = "weighted_average",
-    visibility_mode: str = "hybrid_ray_query",
+    visibility_mode: str = "ray_query",
     pcf_radius: int = 1,
     allow_visibility_fallback: bool = True,
     padding: int = 0,
 ) -> BakedTexture:
-    """Project calibrated photographs into atlas space with shadow and optional ray visibility."""
+    """Project photographs into atlas space with authoritative ray-query visibility by default."""
 
     if baker is None:
         baker = TextureBaker(device_index=device_index)

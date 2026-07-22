@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import time
 
 import numpy as np
-from PIL import Image
-import torch
-import torch.nn.functional as torch_functional
+from PIL import Image, ImageFilter
 
 import asdiff_render
 
@@ -73,34 +72,13 @@ def _dense_seam_pairs(mesh: asdiff_render.UnwrappedMesh, samples_per_edge: int) 
     return np.ascontiguousarray(np.stack((first, second), axis=2).reshape(-1, 2, 2), dtype=np.float32)
 
 
-def _atlas_metadata(
-    mesh: asdiff_render.UnwrappedMesh,
-    resolution: tuple[int, int],
-    rasterizer: asdiff_render.Rasterizer,
-) -> tuple[np.ndarray, np.ndarray]:
-    height, width = resolution
-    atlas_clip = np.empty((mesh.uv.shape[0], 4), dtype=np.float32)
-    atlas_clip[:, :2] = mesh.uv * 2.0 - 1.0
-    atlas_clip[:, 2] = 0.0
-    atlas_clip[:, 3] = 1.0
-    raster, _ = rasterizer.forward(atlas_clip, mesh.indices, resolution)
-    triangle_id = np.rint(raster[..., 3]).astype(np.int64) - 1
-    valid = triangle_id >= 0
-    chart_ids = np.full((height, width), -1, dtype=np.int64)
-    chart_ids[valid] = mesh.face_chart_ids[triangle_id[valid]]
-    return valid, chart_ids
-
-
-def _erode_masks(masks: tuple[np.ndarray, ...], radius: int) -> list[torch.Tensor]:
+def _erode_masks(masks: tuple[np.ndarray, ...], radius: int) -> list[np.ndarray]:
     result = []
     for mask in masks:
-        value = torch.from_numpy(np.ascontiguousarray(mask, dtype=np.float32))
         if radius:
-            inverted = 1.0 - value[None, None]
-            value = 1.0 - torch_functional.max_pool2d(
-                inverted, kernel_size=radius * 2 + 1, stride=1, padding=radius
-            )[0, 0]
-        result.append(value)
+            image = Image.fromarray((np.clip(mask, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8))
+            mask = np.asarray(image.filter(ImageFilter.MinFilter(radius * 2 + 1)), dtype=np.float32) / 255.0
+        result.append(np.ascontiguousarray(mask, dtype=np.float32))
     return result
 
 
@@ -126,31 +104,6 @@ def _export_model(mesh: asdiff_render.UnwrappedMesh, texture: Image.Image, path:
         raise ValueError("output model must use .glb or .obj")
 
 
-def _polish_seams(
-    texture: torch.Tensor,
-    seam_pairs: torch.Tensor,
-    rasterizer: asdiff_render.Rasterizer,
-    steps: int,
-    learning_rate: float,
-) -> tuple[torch.Tensor, list[float]]:
-    if steps <= 0 or seam_pairs.shape[0] == 0:
-        return texture, []
-    parameter = torch.nn.Parameter(texture.detach().clone())
-    optimizer = torch.optim.Adam([parameter], lr=learning_rate)
-    history = []
-    for _ in range(steps):
-        optimizer.zero_grad(set_to_none=True)
-        loss = asdiff_render.seam_consistency_loss(
-            parameter, seam_pairs, rasterizer=rasterizer
-        )
-        loss.backward()
-        optimizer.step()
-        with torch.no_grad():
-            parameter.clamp_(0.0, 1.0)
-        history.append(float(loss.detach()))
-    return parameter.detach(), history
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("mesh_npz")
@@ -160,21 +113,15 @@ def main() -> None:
     parser.add_argument("output_png")
     parser.add_argument("--masks-path", required=True)
     parser.add_argument("--output-model")
-    parser.add_argument("--steps", type=int, default=76)
+    parser.add_argument("--steps", type=int, default=1000)
+    parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=0.005)
-    parser.add_argument("--seam-weight", type=float, default=0.0)
-    parser.add_argument("--tv-weight", type=float, default=0.0)
-    parser.add_argument("--prior-weight", type=float, default=0.0)
+    parser.add_argument("--minimum-learning-rate", type=float, default=0.00025)
     parser.add_argument("--padding", type=int, default=8)
     parser.add_argument("--mask-erosion", type=int, default=2)
     parser.add_argument("--seam-samples", type=int, default=4)
     parser.add_argument("--seam-polish-steps", type=int, default=30)
     parser.add_argument("--seam-polish-learning-rate", type=float, default=0.001)
-    parser.add_argument(
-        "--cache-view-rasters",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-    )
     parser.add_argument("--image-stride", type=int, default=1)
     parser.add_argument("--device-index", type=int, default=0)
     arguments = parser.parse_args()
@@ -192,49 +139,33 @@ def main() -> None:
         image_stride=arguments.image_stride,
     )
     masks = asdiff_render.load_projection_masks(arguments.masks_path, projection.image_names)
-    rasterizer = asdiff_render.Rasterizer(device_index=arguments.device_index)
-    atlas_valid, chart_ids = _atlas_metadata(mesh, (height, width), rasterizer)
+    atlas_valid = np.ascontiguousarray(baked_archive["valid_mask"] > 0.5)
     seam_pairs = _dense_seam_pairs(mesh, arguments.seam_samples)
-
-    homogeneous = np.concatenate(
-        (mesh.positions, np.ones((mesh.positions.shape[0], 1), dtype=np.float32)), axis=1
-    )
-    clip_positions = np.stack(
-        [homogeneous @ matrix.T for matrix in projection.world_to_clip]
-    ).astype(np.float32)
-    options = asdiff_render.AtlasOptimizationOptions(
-        steps=arguments.steps,
-        learning_rate=arguments.learning_rate,
-        total_variation_weight=arguments.tv_weight,
-        seam_weight=arguments.seam_weight,
-        initial_prior_weight=arguments.prior_weight,
-        cache_view_rasters=arguments.cache_view_rasters,
-    )
-    optimized, history = asdiff_render.optimize_texture_atlas(
-        torch.from_numpy(initial_color),
-        torch.from_numpy(clip_positions),
-        torch.from_numpy(mesh.indices.astype(np.int64)),
-        torch.from_numpy(mesh.uv),
-        [torch.from_numpy(image) for image in projection.images],
-        rasterizer=rasterizer,
+    baker = asdiff_render.TextureBaker(device_index=arguments.device_index)
+    start_time = time.perf_counter()
+    optimized, history, seam_history, precompute_seconds, optimization_seconds = baker.refine_texture(
+        np.ascontiguousarray(initial_color, dtype=np.float32),
+        mesh.positions,
+        mesh.uv,
+        mesh.indices,
+        list(projection.images),
+        projection.world_to_clip,
         visibility_masks=_erode_masks(masks, arguments.mask_erosion),
-        atlas_valid_mask=torch.from_numpy(atlas_valid),
-        chart_ids=torch.from_numpy(chart_ids),
-        seam_uv_pairs=torch.from_numpy(seam_pairs),
-        options=options,
+        seam_uv_pairs=seam_pairs,
+        steps=arguments.steps,
+        batch_size=arguments.batch_size,
+        learning_rate=arguments.learning_rate,
+        minimum_learning_rate=arguments.minimum_learning_rate,
+        seam_polish_steps=arguments.seam_polish_steps,
+        seam_learning_rate=arguments.seam_polish_learning_rate,
     )
+    elapsed_seconds = time.perf_counter() - start_time
     optimized_rgba = np.concatenate(
-        (optimized.numpy(), atlas_valid[..., None].astype(np.float32)), axis=2
+        (optimized, atlas_valid[..., None].astype(np.float32)), axis=2
     )
-    optimized_rgba = asdiff_render.pad_texture_atlas(optimized_rgba, atlas_valid, arguments.padding)
-    optimized, seam_history = _polish_seams(
-        torch.from_numpy(np.ascontiguousarray(optimized_rgba[..., :3])),
-        torch.from_numpy(seam_pairs),
-        rasterizer,
-        arguments.seam_polish_steps,
-        arguments.seam_polish_learning_rate,
-    )
-    optimized_rgba[..., :3] = optimized.numpy()
+    # The input atlas was padded before refinement. Photometric steps leave
+    # guard texels untouched and native seam polish intentionally adjusts them,
+    # so padding again here would overwrite the seam solution.
     output_path = Path(arguments.output_png)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     srgb = np.clip(_linear_to_srgb(np.clip(optimized_rgba[..., :3], 0.0, 1.0)), 0.0, 1.0)
@@ -253,8 +184,9 @@ def main() -> None:
     print(
         f"views={len(projection.images)} steps={len(history)} seams={len(seam_pairs)} "
         f"loss={history[0]:.6f}->{history[-1]:.6f} "
-        + (f"seam={seam_history[0]:.6f}->{seam_history[-1]:.6f} " if seam_history else "")
-        + f"output={output_path}",
+        + (f"seam={seam_history[0]:.6f}->{seam_history[-1]:.6f} " if len(seam_history) else "")
+        + f"precompute={precompute_seconds:.3f}s optimize={optimization_seconds:.3f}s "
+        + f"elapsed={elapsed_seconds:.3f}s output={output_path}",
         flush=True,
     )
 

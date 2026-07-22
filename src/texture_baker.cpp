@@ -167,9 +167,10 @@ TextureBakeOutput TextureBaker::bake(
         !std::isfinite(options.ray_origin_bias) || options.ray_origin_bias <= 0.0F) {
         throw std::invalid_argument("atlas dimensions are invalid or pcf_radius exceeds 4");
     }
-    if (options.visibility_mode == VisibilityMode::hybrid_ray_query && !impl_->context_.device_info.supports_ray_query &&
+    const bool ray_visibility_requested = options.visibility_mode != VisibilityMode::shadow_map;
+    if (ray_visibility_requested && !impl_->context_.device_info.supports_ray_query &&
         !options.allow_visibility_fallback) {
-        throw std::runtime_error("hybrid_ray_query was requested but the selected Vulkan device does not support it");
+        throw std::runtime_error("ray-query visibility was requested but the selected Vulkan device does not support it");
     }
     for (const auto& view : views) {
         validate_view(view);
@@ -207,8 +208,11 @@ TextureBakeOutput TextureBaker::bake(
     best_confidence_buffer.upload(zero_scalar.data(), zero_scalar.size() * sizeof(float));
     std::vector<std::uint32_t> no_source(atlas_pixel_count, std::numeric_limits<std::uint32_t>::max());
     source_view_buffer.upload(no_source.data(), no_source.size() * sizeof(std::uint32_t));
-    const bool use_ray_query = options.visibility_mode == VisibilityMode::hybrid_ray_query &&
-                               impl_->context_.device_info.supports_ray_query;
+    const bool use_ray_query = ray_visibility_requested && impl_->context_.device_info.supports_ray_query;
+    const auto effective_visibility_mode = use_ray_query
+        ? options.visibility_mode
+        : VisibilityMode::shadow_map;
+    const bool use_shadow_map = effective_visibility_mode != VisibilityMode::ray_query;
     std::optional<RayQueryScene> ray_scene;
     if (use_ray_query) {
         ray_scene.emplace(impl_->context_.create_ray_query_scene(positions, triangle_indices));
@@ -226,21 +230,25 @@ TextureBakeOutput TextureBaker::bake(
                 ray_scene->top_level, ray_visibility_buffer, &ray_push, sizeof(ray_push),
                 divide_round_up(static_cast<std::uint32_t>(atlas_pixel_count), PROJECTION_BLOCK_SIZE));
         }
-        const auto clip_positions = transform_positions(positions, view.world_to_clip);
-        RasterizeOptions shadow_options;
-        shadow_options.width = view.width;
-        shadow_options.height = view.height;
-        shadow_options.output_barycentric_derivatives = false;
-        shadow_options.viewport = view.viewport;
-        const auto shadow_raster = impl_->rasterizer_.forward(clip_positions, triangle_indices, shadow_options);
+        std::vector<float> shadow_raster_data{0.0F};
+        if (use_shadow_map) {
+            const auto clip_positions = transform_positions(positions, view.world_to_clip);
+            RasterizeOptions shadow_options;
+            shadow_options.width = view.width;
+            shadow_options.height = view.height;
+            shadow_options.output_barycentric_derivatives = false;
+            shadow_options.viewport = view.viewport;
+            auto shadow_raster = impl_->rasterizer_.forward(clip_positions, triangle_indices, shadow_options);
+            shadow_raster_data = std::move(shadow_raster.raster);
+        }
         std::vector<float> default_mask{1.0F};
         const std::span<const float> mask = view.visibility_mask.empty()
             ? std::span<const float>(default_mask)
             : std::span<const float>(view.visibility_mask);
-        auto shadow_buffer = impl_->context_.create_buffer(shadow_raster.raster.size() * sizeof(float), 0);
+        auto shadow_buffer = impl_->context_.create_buffer(shadow_raster_data.size() * sizeof(float), 0);
         auto photo_buffer = impl_->context_.create_buffer(view.image.size() * sizeof(float), 0);
         auto mask_buffer = impl_->context_.create_buffer(mask.size() * sizeof(float), 0);
-        shadow_buffer.upload(shadow_raster.raster.data(), shadow_raster.raster.size() * sizeof(float));
+        shadow_buffer.upload(shadow_raster_data.data(), shadow_raster_data.size() * sizeof(float));
         photo_buffer.upload(view.image.data(), view.image.size() * sizeof(float));
         mask_buffer.upload(mask.data(), mask.size() * sizeof(float));
 
@@ -254,7 +262,8 @@ TextureBakeOutput TextureBaker::bake(
         const std::uint32_t packed = view.channel_count |
             (static_cast<std::uint32_t>(options.blend_mode) << 8U) |
             (options.pcf_radius << 16U) |
-            (view.visibility_mask.empty() ? 0U : (1U << 24U));
+            (view.visibility_mask.empty() ? 0U : (1U << 24U)) |
+            (static_cast<std::uint32_t>(effective_visibility_mode) << 25U);
         push_constants.settings = {
             view.depth_bias,
             view.min_view_cosine,

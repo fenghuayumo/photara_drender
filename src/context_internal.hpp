@@ -22,7 +22,12 @@ struct Buffer {
     void* mapped = nullptr;
 
     Buffer() = default;
-    Buffer(VkPhysicalDevice physical_device, VkDevice logical_device, VkDeviceSize byte_size, VkBufferUsageFlags usage);
+    Buffer(
+        VkPhysicalDevice physical_device,
+        VkDevice logical_device,
+        VkDeviceSize byte_size,
+        VkBufferUsageFlags usage,
+        bool prefer_device_local = false);
     ~Buffer();
     Buffer(Buffer&& other) noexcept;
     Buffer& operator=(Buffer&& other) noexcept;
@@ -88,7 +93,10 @@ public:
     Impl(const Impl&) = delete;
     Impl& operator=(const Impl&) = delete;
 
-    [[nodiscard]] Buffer create_buffer(VkDeviceSize size, VkBufferUsageFlags usage) const;
+    [[nodiscard]] Buffer create_buffer(
+        VkDeviceSize size,
+        VkBufferUsageFlags usage,
+        bool prefer_device_local = false) const;
     [[nodiscard]] ComputePipeline create_pipeline(
         const std::string& shader_name,
         std::uint32_t storage_buffer_count,

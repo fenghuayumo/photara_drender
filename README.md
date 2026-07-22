@@ -59,7 +59,7 @@ baked = project_texture_atlas(
     camera_positions,    # [view_count, 3]
     visibility_masks=masks,
     resolution=(2048, 2048),
-    visibility_mode="hybrid_ray_query",
+    visibility_mode="ray_query",
     blend_mode="weighted_average",
 )
 
@@ -95,7 +95,7 @@ baked = project_texture_atlas(
     projection.world_to_clip,
     projection.camera_positions,
     visibility_masks=masks,
-    visibility_mode="hybrid_ray_query",
+    visibility_mode="ray_query",
 )
 ```
 
