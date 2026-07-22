@@ -11,8 +11,9 @@ The current end-to-end path is:
 5. Compare the render with the projected photograph through a visibility mask.
 6. Backpropagate into atlas texels, vertex UV coordinates, or clip-space positions.
 
-`optimize_texture_atlas()` optimizes atlas texels. Lower-level functions remain available when UV coordinates, camera
-parameters, exposure, or geometry should be included in the optimizer.
+The production COLMAP path uses the native C++ `TextureRefiner`: view rasters, masks, atlas gradients, Adam state, and seam
+polish all remain in persistent Vulkan buffers. `optimize_texture_atlas()` is the optional PyTorch research adapter for
+experiments that also optimize UV coordinates, camera parameters, exposure, or geometry.
 
 ## AIHoloImager integration
 
@@ -79,4 +80,3 @@ These values allow construction of `chart_ids`, `atlas_valid_mask`, and `seam_uv
 - A UV-layout optimizer additionally needs signed-area, overlap, stretch, texel-density, boundary, and chart-packing
   constraints; optimizing UV coordinates with only photometric loss can fold or overlap charts.
 - Zero-copy Vulkan/PyTorch interop and device-local resource pooling are required for large production datasets.
-

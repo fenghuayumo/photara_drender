@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import time
 
@@ -104,13 +105,92 @@ def _export_model(mesh: asdiff_render.UnwrappedMesh, texture: Image.Image, path:
         raise ValueError("output model must use .glb or .obj")
 
 
+def _masked_reprojection_diagnostics(
+    mesh: asdiff_render.UnwrappedMesh,
+    texture_linear: np.ndarray,
+    projection: asdiff_render.ColmapProjection,
+    masks: list[np.ndarray],
+    output_dir: Path,
+    view_count: int,
+    device_index: int,
+) -> None:
+    """Save foreground-cropped target/render/error panels and masked metrics."""
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    count = min(max(view_count, 1), len(projection.images))
+    selected = np.unique(np.linspace(0, len(projection.images) - 1, count, dtype=np.int64))
+    rasterizer = asdiff_render.Rasterizer(device_index=device_index)
+    homogeneous = np.concatenate(
+        (mesh.positions, np.ones((mesh.positions.shape[0], 1), dtype=np.float32)), axis=1
+    )
+    metrics = []
+    for view_index in selected:
+        target = projection.images[int(view_index)]
+        height, width = target.shape[:2]
+        clip = np.ascontiguousarray(
+            homogeneous @ projection.world_to_clip[int(view_index)].T, dtype=np.float32
+        )
+        raster, _ = rasterizer.forward(
+            clip, mesh.indices, (height, width), output_barycentric_derivatives=False
+        )
+        uv = rasterizer.interpolate_forward(mesh.uv, mesh.indices, raster)
+        rendered = rasterizer.texture_forward(texture_linear, uv, raster)
+        valid = (raster[..., 3] != 0.0) & (masks[int(view_index)] > 0.5)
+        if not valid.any():
+            continue
+        difference = np.abs(rendered - target)
+        values = difference[valid]
+        mse = float(np.mean(np.square(rendered[valid] - target[valid])))
+        ys, xs = np.nonzero(valid)
+        margin = max(8, int(0.03 * max(height, width)))
+        y0, y1 = max(0, int(ys.min()) - margin), min(height, int(ys.max()) + margin + 1)
+        x0, x1 = max(0, int(xs.min()) - margin), min(width, int(xs.max()) + margin + 1)
+
+        target_vis = np.clip(_linear_to_srgb(np.clip(target, 0.0, 1.0)), 0.0, 1.0)
+        render_vis = np.clip(_linear_to_srgb(np.clip(rendered, 0.0, 1.0)), 0.0, 1.0)
+        target_vis[~valid] = 0.0
+        render_vis[~valid] = 0.0
+        error = np.zeros_like(target_vis)
+        error_level = np.clip(difference.mean(axis=2) * 5.0, 0.0, 1.0)
+        error[..., 0] = error_level
+        error[..., 1] = np.sqrt(error_level) * 0.8
+        error[~valid] = 0.0
+        panel = np.concatenate(
+            (target_vis[y0:y1, x0:x1], render_vis[y0:y1, x0:x1], error[y0:y1, x0:x1]),
+            axis=1,
+        )
+        image_name = Path(projection.image_names[int(view_index)]).stem
+        Image.fromarray((panel * 255.0 + 0.5).astype(np.uint8), "RGB").save(
+            output_dir / f"{int(view_index):04d}_{image_name}_masked_diff.png"
+        )
+        metrics.append(
+            {
+                "view_index": int(view_index),
+                "image_name": projection.image_names[int(view_index)],
+                "foreground_pixels": int(valid.sum()),
+                "masked_mae_linear": float(values.mean()),
+                "masked_rmse_linear": float(np.sqrt(mse)),
+            }
+        )
+    with (output_dir / "masked_metrics.json").open("w", encoding="utf-8") as stream:
+        json.dump({"panels": "target | render | absolute error", "views": metrics}, stream, indent=2)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("mesh_npz")
     parser.add_argument("baked_npz")
     parser.add_argument("sparse_path")
-    parser.add_argument("images_path")
+    parser.add_argument("images_path", help="original COLMAP RGB image directory")
     parser.add_argument("output_png")
+    parser.add_argument(
+        "--texture-source", choices=("delight", "rgb"), default="delight",
+        help="must match the source used by the initial bake (default: delight)",
+    )
+    parser.add_argument(
+        "--delighted-images-path",
+        help="Intrinsic-delighted views; defaults to <images_path>_delighted",
+    )
     parser.add_argument("--masks-path", required=True)
     parser.add_argument("--output-model")
     parser.add_argument("--steps", type=int, default=1000)
@@ -124,21 +204,39 @@ def main() -> None:
     parser.add_argument("--seam-polish-learning-rate", type=float, default=0.001)
     parser.add_argument("--image-stride", type=int, default=1)
     parser.add_argument("--device-index", type=int, default=0)
+    parser.add_argument("--diagnostics-dir")
+    parser.add_argument("--diagnostic-view-count", type=int, default=3)
+    parser.add_argument("--no-diagnostics", action="store_true")
     arguments = parser.parse_args()
 
     mesh = _load_mesh(Path(arguments.mesh_npz))
     baked_archive = np.load(arguments.baked_npz)
+    baked_source = str(baked_archive["texture_source"]) if "texture_source" in baked_archive else "rgb"
+    if baked_source != arguments.texture_source:
+        raise SystemExit(
+            f"initial bake uses {baked_source!r}, but refinement requested "
+            f"{arguments.texture_source!r}; projection and optimization must use the same views"
+        )
     initial_color = asdiff_render.pad_texture_atlas(
         baked_archive["color"], baked_archive["valid_mask"], arguments.padding
     )[..., :3]
     height, width = initial_color.shape[:2]
+    try:
+        source_images_path = asdiff_render.resolve_texture_images_path(
+            arguments.images_path,
+            texture_source=arguments.texture_source,
+            delighted_images_path=arguments.delighted_images_path,
+        )
+    except FileNotFoundError as error:
+        raise SystemExit(str(error)) from error
     projection = asdiff_render.load_colmap_projection(
         arguments.sparse_path,
-        arguments.images_path,
+        source_images_path,
         mesh_positions=mesh.positions,
         image_stride=arguments.image_stride,
     )
     masks = asdiff_render.load_projection_masks(arguments.masks_path, projection.image_names)
+    optimization_masks = _erode_masks(masks, arguments.mask_erosion)
     atlas_valid = np.ascontiguousarray(baked_archive["valid_mask"] > 0.5)
     seam_pairs = _dense_seam_pairs(mesh, arguments.seam_samples)
     baker = asdiff_render.TextureBaker(device_index=arguments.device_index)
@@ -150,7 +248,7 @@ def main() -> None:
         mesh.indices,
         list(projection.images),
         projection.world_to_clip,
-        visibility_masks=_erode_masks(masks, arguments.mask_erosion),
+        visibility_masks=optimization_masks,
         seam_uv_pairs=seam_pairs,
         steps=arguments.steps,
         batch_size=arguments.batch_size,
@@ -178,11 +276,30 @@ def main() -> None:
         history=np.asarray(history, dtype=np.float32),
         seam_history=np.asarray(seam_history, dtype=np.float32),
         seam_pairs=seam_pairs,
+        texture_source=np.asarray(arguments.texture_source),
+        source_images_path=np.asarray(str(source_images_path.resolve())),
+        mask_applied=np.asarray(True),
     )
     if arguments.output_model:
         _export_model(mesh, texture, Path(arguments.output_model))
+    if not arguments.no_diagnostics:
+        diagnostics_dir = (
+            Path(arguments.diagnostics_dir)
+            if arguments.diagnostics_dir
+            else output_path.parent / f"{output_path.stem}_diagnostics"
+        )
+        _masked_reprojection_diagnostics(
+            mesh,
+            np.ascontiguousarray(optimized, dtype=np.float32),
+            projection,
+            optimization_masks,
+            diagnostics_dir,
+            arguments.diagnostic_view_count,
+            arguments.device_index,
+        )
     print(
-        f"views={len(projection.images)} steps={len(history)} seams={len(seam_pairs)} "
+        f"views={len(projection.images)} source={arguments.texture_source} "
+        f"steps={len(history)} seams={len(seam_pairs)} "
         f"loss={history[0]:.6f}->{history[-1]:.6f} "
         + (f"seam={seam_history[0]:.6f}->{seam_history[-1]:.6f} " if len(seam_history) else "")
         + f"precompute={precompute_seconds:.3f}s optimize={optimization_seconds:.3f}s "

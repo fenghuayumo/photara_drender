@@ -41,9 +41,10 @@ The implementation replaces the existing texture reconstruction sequence directl
 
 - `Mesh::UnwrapUv()` becomes `unwrap_mesh_uv()`; retain `vertex_remap` when rebuilding normals and other attributes.
 - `FlattenVs/FlattenPs` becomes atlas-space Vulkan compute rasterization plus attribute interpolation.
-- `GenShadowMap()` becomes the camera raster generated internally by `TextureBaker`.
-- `ProjectTextureCs` becomes `project_texture.hlsl`, with float accumulation, masks, PCF, and optional ray visibility.
-- The projected result becomes the initial parameter for `optimize_texture_atlas()` instead of being the final texture.
+- `GenShadowMap()` is removed from the default quality path. `TextureBaker` builds BLAS/TLAS and uses inline ray queries;
+  camera shadow rasters are created only for an explicit `shadow_map` request or an allowed unsupported-device fallback.
+- `ProjectTextureCs` becomes `project_texture.hlsl`, with float accumulation, foreground masks, and ray visibility.
+- The projected result becomes the initial parameter for the native C++ `TextureRefiner` instead of being the final texture.
 
 Pass `projection.proj_mtx * projection.view_mtx * model_mtx` as `world_to_clip` when input positions are still in model
 space. If positions are already transformed into world space, omit `model_mtx`. Convert GLM column-major storage to the
@@ -64,11 +65,21 @@ DirectX-Headers CMake packages, or disable UVAtlas and pass a pre-unwrapped mesh
 
 ## Seam-safe output and differentiable refinement
 
+The high-level COLMAP examples use `delight` as their default texture source. Intrinsic-delighted photographs must be
+precomputed in `<images_path>_delighted` or supplied with `--delighted-images-path`; use `--texture-source rgb` for a
+deliberate original-RGB bake. The selected source is written into the bake archive, and refinement rejects a different
+source so an albedo initialization can never be optimized against lit RGB photographs by accident.
+
 Projection-valid texels do not cover the empty gutter around every UV chart. Use `padding=8` in
 `project_texture_atlas()` (or `pad_texture_atlas()` on an existing bake) before filtered rendering or model export. The
 projection-valid mask remains unchanged, while RGB and alpha guard texels are extended into the gutter.
 
-`examples/refine_colmap_texture.py` uses the native C++ `TextureRefiner`. Camera rasters, interpolated UVs, photographs,
+`examples/bake_colmap.py` keeps the initial ray-query projection in memory, runs 1000 native refinement steps by default,
+and exports the PNG/GLB only after seam polish. Use `--no-optimize` to explicitly export an unrefined bake, or
+`--save-initial-bake` to request an intermediate checkpoint. `examples/refine_colmap_texture.py` remains the resumable
+entry point for an existing bake archive.
+
+Both entry points use the native C++ `TextureRefiner`. Camera rasters, interpolated UVs, photographs,
 masks, the 4K texture, gradients, and both Adam moments are allocated once in persistent Vulkan buffers (preferring a
 host-visible device-local memory type). The complete optimization command stream is recorded and submitted once; texture
 and loss histories are downloaded only after the queue finishes. PyTorch is not involved in this path.
@@ -76,4 +87,6 @@ and loss histories are downloaded only after the queue finishes. PyTorch is not 
 The default high-quality profile performs 1000 mini-batch photometric Adam steps with a cosine learning-rate schedule,
 then resets the Adam state and performs native seam-only polish. Pixel-to-atlas gradients use portable uint
 compare/exchange to atomically accumulate IEEE float values, avoiding a dependency on optional float-atomic extensions.
+The COLMAP refinement example requires foreground masks. Its photometric normalization includes only rasterized pixels
+inside the eroded foreground mask, and its diagnostic panels/MAE/RMSE use the exact same mask and crop to the foreground.
 The older `optimize_texture_atlas()` PyTorch adapter remains available for research code needing its general autograd API.

@@ -254,6 +254,9 @@ int main() {
         require(baked.color.size() == 16 * 16 * 4, "Unexpected baked atlas size");
         require(std::ranges::any_of(baked.valid_mask, [](float value) { return value > 0.5F; }),
                 "Texture projection did not produce valid atlas texels");
+        if (context.device_info().supports_ray_query) {
+            require(baked.used_ray_query, "Default texture projection did not use Vulkan ray queries");
+        }
         const auto first_valid = std::ranges::find_if(baked.valid_mask, [](float value) { return value > 0.5F; });
         const auto valid_index = static_cast<std::size_t>(first_valid - baked.valid_mask.begin());
         require(std::abs(baked.color[valid_index * 4 + 0] - 0.8F) < 1e-4F,

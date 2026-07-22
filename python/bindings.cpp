@@ -723,7 +723,7 @@ PYBIND11_MODULE(_asdiff_render, module) {
             py::arg("images"), py::arg("world_to_clip"), py::arg("camera_positions"),
             py::arg("visibility_masks") = py::none(), py::arg("viewports") = py::none(),
             py::arg("resolution") = std::pair{1024U, 1024U},
-            py::arg("blend_mode") = "weighted_average", py::arg("visibility_mode") = "shadow_map",
+            py::arg("blend_mode") = "weighted_average", py::arg("visibility_mode") = "ray_query",
             py::arg("pcf_radius") = 1, py::arg("allow_visibility_fallback") = true)
         .def(
             "refine_texture",

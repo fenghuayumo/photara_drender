@@ -157,6 +157,38 @@ def _srgb_to_linear(image: np.ndarray) -> np.ndarray:
     return np.where(image <= 0.04045, image / 12.92, ((image + 0.055) / 1.055) ** 2.4).astype(np.float32)
 
 
+def resolve_texture_images_path(
+    images_path: Union[str, Path],
+    *,
+    texture_source: str = "delight",
+    delighted_images_path: Optional[Union[str, Path]] = None,
+) -> Path:
+    """Resolve the view directory shared by baking and refinement.
+
+    Delight is intentionally the high-level workflow default. It must be an
+    explicit, precomputed Intrinsic view set; missing delight data never falls
+    through silently to the original RGB photographs.
+    """
+
+    if texture_source not in ("delight", "rgb"):
+        raise ValueError("texture_source must be 'delight' or 'rgb'")
+    raw_path = Path(images_path)
+    resolved = raw_path if texture_source == "rgb" else (
+        Path(delighted_images_path)
+        if delighted_images_path is not None
+        else raw_path.with_name(f"{raw_path.name}_delighted")
+    )
+    if not resolved.is_dir():
+        if texture_source == "delight":
+            raise FileNotFoundError(
+                "delight is the default texture source, but its image directory is missing: "
+                f"{resolved}. Generate Intrinsic-delighted views there, pass "
+                "delighted_images_path, or explicitly select texture_source='rgb'."
+            )
+        raise FileNotFoundError(f"RGB image directory is missing: {resolved}")
+    return resolved
+
+
 def load_colmap_projection(
     sparse_path: Union[str, Path],
     images_path: Union[str, Path],

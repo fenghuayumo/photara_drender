@@ -138,7 +138,10 @@ struct TextureBakeOptions {
     std::uint32_t width = 1024;
     std::uint32_t height = 1024;
     ProjectionBlendMode blend_mode = ProjectionBlendMode::best_view;
-    VisibilityMode visibility_mode = VisibilityMode::shadow_map;
+    // Exact ray-query visibility is the quality/default path. A shadow map is
+    // allocated only when explicitly requested or when fallback is allowed on
+    // a device without VK_KHR_ray_query support.
+    VisibilityMode visibility_mode = VisibilityMode::ray_query;
     std::uint32_t pcf_radius = 1;
     float ray_origin_bias = 1e-4F;
     bool allow_visibility_fallback = true;

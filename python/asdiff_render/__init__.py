@@ -10,7 +10,13 @@ from ._asdiff_render import (
     unwrap_uv,
 )
 from .baking import BakedTexture, UnwrappedMesh, pad_texture_atlas, project_texture_atlas, unwrap_mesh_uv
-from .colmap import ColmapProjection, load_colmap_projection, load_projection_masks, read_colmap_text_model
+from .colmap import (
+    ColmapProjection,
+    load_colmap_projection,
+    load_projection_masks,
+    read_colmap_text_model,
+    resolve_texture_images_path,
+)
 from .mesh_processing import (
     MESH_QUALITY_TRIANGLE_COUNTS,
     MeshPreparationOptions,
@@ -77,6 +83,7 @@ __all__ = [
     "prepare_mesh_for_baking",
     "rasterize",
     "read_colmap_text_model",
+    "resolve_texture_images_path",
     "render_textured_mesh",
     "seam_consistency_loss",
     "texture",

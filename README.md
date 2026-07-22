@@ -104,8 +104,11 @@ baked = project_texture_atlas(
 
 ## 可微 atlas 优化
 
-初始投影 atlas 可以继续传给 `render_textured_mesh()` 和 `optimize_texture_atlas()`，通过照片损失反向优化
-atlas texel。详见 [可微纹理图集优化](docs/texture_atlas.md)。
+生产路径在内存中完成 ray-query bake 后，立即使用 C++ `TextureRefiner` 在 Vulkan 中执行默认 1000 步 masked
+photometric Adam 与 seam polish，最后只导出优化后的模型；`--no-optimize` 才导出未优化贴图。COLMAP 示例默认读取
+`images_delighted`，也可用 `--texture-source rgb` 明确选择原始 RGB；烘焙和优化会校验使用同一种图像源。
+前景 mask 同时用于优化损失和最终 masked difference 图。PyTorch `optimize_texture_atlas()` 仅保留为研究接口。
+详见 [可微纹理图集优化](docs/texture_atlas.md)。
 
 ## 当前边界
 

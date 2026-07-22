@@ -1,9 +1,20 @@
 import numpy as np
+from pathlib import Path
+import tempfile
 
 import asdiff_render
 
 
 def main() -> None:
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        root = Path(temporary_directory)
+        raw = root / "images"
+        delighted = root / "images_delighted"
+        raw.mkdir()
+        delighted.mkdir()
+        assert asdiff_render.resolve_texture_images_path(raw) == delighted
+        assert asdiff_render.resolve_texture_images_path(raw, texture_source="rgb") == raw
+
     rasterizer = asdiff_render.Rasterizer()
     positions = np.array(
         [[-0.75, -0.75, 0.0, 1.0], [0.75, -0.75, 0.0, 1.0], [0.0, 0.75, 0.0, 1.0]],
@@ -57,6 +68,18 @@ def main() -> None:
     if rasterizer.device_info.supports_ray_query:
         assert baked.used_ray_query
     native_baker = asdiff_render.TextureBaker()
+    default_native_bake = native_baker.bake(
+        unwrapped.positions,
+        unwrapped.normals,
+        unwrapped.uv,
+        unwrapped.indices,
+        [image],
+        matrix,
+        camera_positions,
+        resolution=(16, 16),
+    )
+    if native_baker.device_info.supports_ray_query:
+        assert default_native_bake[-1]
     refined, refine_history, seam_history, precompute_seconds, optimization_seconds = native_baker.refine_texture(
         np.ascontiguousarray(baked.color[..., :3] * 0.5),
         unwrapped.positions,
