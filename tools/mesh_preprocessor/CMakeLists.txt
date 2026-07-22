@@ -16,7 +16,7 @@ set(ASDIFF_MESH_SOURCES
     src/remesh_instant.cpp)
 
 if(ASDIFF_ENABLE_INSTANT_MESHES)
-    include("${CMAKE_SOURCE_DIR}/cmake/FetchInstantMeshes.cmake")
+    include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/FetchInstantMeshes.cmake")
 endif()
 
 add_library(asdiff_mesh ${ASDIFF_MESH_SOURCES})

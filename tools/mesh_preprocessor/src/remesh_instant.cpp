@@ -3,6 +3,8 @@
 
 #include "asdiff_mesh/mesh_ops.hpp"
 
+#include <stdexcept>
+
 #if !ASDIFF_HAS_INSTANT_MESHES
 
 namespace asdiff_mesh {
@@ -103,7 +105,10 @@ TriangleMesh triangulate_extracted_mesh(const MatrixXf& vertices, const MatrixXu
         output.indices.push_back(i0);
         output.indices.push_back(i1);
         output.indices.push_back(i2);
-        if (corners == 4) {
+        // Instant Meshes represents an irregular triangle in a quad-dominant
+        // result by repeating its final corner. Do not emit the corresponding
+        // degenerate second triangle.
+        if (corners == 4 && faces(3, face) != i2) {
             const auto i3 = faces(3, face);
             output.indices.push_back(i0);
             output.indices.push_back(i2);
@@ -291,7 +296,7 @@ TriangleMesh remesh_field_aligned(
         mRes.scale(),
         crease_out,
         true,
-        posy == 4,
+        false,
         bvh,
         options.smooth_iterations);
     delete bvh;
