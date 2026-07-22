@@ -433,7 +433,8 @@ public:
         const py::array_t<float, py::array::c_style | py::array::forcecast>& uv,
         const py::array_t<float, py::array::c_style | py::array::forcecast>& raster,
         const py::array_t<float, py::array::c_style | py::array::forcecast>& grad_sampled,
-        const std::string& address_mode) {
+        const std::string& address_mode,
+        bool compute_uv_gradient) {
         const auto texture_info = texture.request();
         if (texture_info.ndim != 3 || texture_info.shape[0] <= 0 || texture_info.shape[1] <= 0 ||
             texture_info.shape[2] <= 0) {
@@ -461,10 +462,13 @@ public:
             parse_address_mode(address_mode),
         };
         auto gradients = rasterizer_.texture_backward(
-            as_span(texture), texture_desc, as_span(uv), raster_output, as_span(grad_sampled));
+            as_span(texture), texture_desc, as_span(uv), raster_output, as_span(grad_sampled), compute_uv_gradient);
         auto grad_texture = vector_to_array(
             std::move(gradients.texture),
             {texture_info.shape[0], texture_info.shape[1], texture_info.shape[2]});
+        if (!compute_uv_gradient) {
+            return py::make_tuple(std::move(grad_texture), py::none());
+        }
         auto grad_uv = vector_to_array(
             std::move(gradients.uv),
             {uv_info.shape[0], uv_info.shape[1], 2});
@@ -542,7 +546,8 @@ PYBIND11_MODULE(_asdiff_render, module) {
             py::arg("uv"),
             py::arg("raster"),
             py::arg("grad_sampled"),
-            py::arg("address_mode") = "clamp");
+            py::arg("address_mode") = "clamp",
+            py::arg("compute_uv_gradient") = true);
 
     py::class_<PythonUvAtlasResult>(module, "UvAtlasResult")
         .def_property_readonly("positions", &PythonUvAtlasResult::positions)

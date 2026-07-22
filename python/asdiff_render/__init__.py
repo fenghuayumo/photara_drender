@@ -9,7 +9,7 @@ from ._asdiff_render import (
     has_uv_atlas_backend,
     unwrap_uv,
 )
-from .baking import BakedTexture, UnwrappedMesh, project_texture_atlas, unwrap_mesh_uv
+from .baking import BakedTexture, UnwrappedMesh, pad_texture_atlas, project_texture_atlas, unwrap_mesh_uv
 from .colmap import ColmapProjection, load_colmap_projection, load_projection_masks, read_colmap_text_model
 from .mesh_processing import (
     MESH_QUALITY_TRIANGLE_COUNTS,
@@ -72,6 +72,7 @@ __all__ = [
     "load_projection_masks",
     "masked_charbonnier_loss",
     "optimize_texture_atlas",
+    "pad_texture_atlas",
     "project_texture_atlas",
     "prepare_mesh_for_baking",
     "rasterize",

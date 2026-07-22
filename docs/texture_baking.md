@@ -62,3 +62,19 @@ otherwise unsupported devices use PCF shadow maps and return `used_ray_query=Fal
 The core renderer and shadow-map projection remain Vulkan 1.2 portable. Microsoft UVAtlas is an optional CPU build-time
 backend: Windows can fetch the pinned release automatically; Linux builds can provide the `uvatlas`, DirectXMath, and
 DirectX-Headers CMake packages, or disable UVAtlas and pass a pre-unwrapped mesh.
+
+## Seam-safe output and differentiable refinement
+
+Projection-valid texels do not cover the empty gutter around every UV chart. Use `padding=8` in
+`project_texture_atlas()` (or `pad_texture_atlas()` on an existing bake) before filtered rendering or model export. The
+projection-valid mask remains unchanged, while RGB and alpha guard texels are extended into the gutter.
+
+`examples/refine_colmap_texture.py` refines an initial bake by rendering it back into the calibrated photographs. It
+combines the foreground masks with a photometric loss, chart-aware total variation, dense corresponding samples along UV
+seams, an initial-atlas prior, and a final seam-only polish. An optional raster cache avoids repeating mesh rasterization
+and UV interpolation when a camera is revisited, but it is disabled by default because 4K atlas staging and optimizer
+updates dominate this version's runtime while cached per-view buffers consume substantial host memory.
+
+The default refinement profile performs one photograph step per calibrated view and then 30 inexpensive seam-only steps.
+For a stronger two-pass profile, use `--steps 152 --tv-weight 1e-5 --prior-weight 0.05`; per-step seam loss is normally left
+at zero because the final seam polish avoids downloading a second full-atlas gradient during every photograph step.

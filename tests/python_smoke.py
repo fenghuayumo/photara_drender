@@ -56,6 +56,9 @@ def main() -> None:
     assert baked.valid_mask.any()
     if rasterizer.device_info.supports_ray_query:
         assert baked.used_ray_query
+    padded = asdiff_render.pad_texture_atlas(baked.color, baked.valid_mask, 2)
+    assert padded.shape == baked.color.shape
+    assert np.count_nonzero(padded[..., :3]) >= np.count_nonzero(baked.color[..., :3])
 
     attributes = np.eye(3, dtype=np.float32)
     interpolated = rasterizer.interpolate_forward(attributes, indices, raster)
@@ -161,6 +164,7 @@ def main() -> None:
             learning_rate=1e-2,
             total_variation_weight=0.0,
             seam_weight=0.0,
+            cache_view_rasters=True,
         )
         optimized_texture, history = asdiff_render.optimize_texture_atlas(
             torch_texture.detach() * 0.9,

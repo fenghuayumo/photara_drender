@@ -739,7 +739,8 @@ TextureGradients Rasterizer::texture_backward(
     const TextureDesc& texture_desc,
     std::span<const float> uv,
     const RasterizeOutput& raster_output,
-    std::span<const float> grad_sampled) {
+    std::span<const float> grad_sampled,
+    bool compute_uv_gradient) {
     validate_texture_inputs(texture, texture_desc, uv, raster_output);
     const auto pixel_count = static_cast<std::size_t>(raster_output.width) * raster_output.height;
     const auto texel_count = static_cast<std::size_t>(texture_desc.width) * texture_desc.height;
@@ -761,18 +762,11 @@ TextureGradients Rasterizer::texture_backward(
     const auto texel_offset_bytes = adjacency.texel_offsets.size() * sizeof(std::uint32_t);
     const auto sample_entry_bytes = adjacency.sample_entries.size() * sizeof(std::uint32_t);
     const auto sample_weight_bytes = adjacency.sample_weights.size() * sizeof(float);
-    auto texture_buffer = impl_->context_.create_buffer(texture_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    auto uv_buffer = impl_->context_.create_buffer(uv_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    auto raster_buffer = impl_->context_.create_buffer(raster_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     auto grad_sampled_buffer = impl_->context_.create_buffer(grad_sampled_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     auto texel_offset_buffer = impl_->context_.create_buffer(texel_offset_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     auto sample_entry_buffer = impl_->context_.create_buffer(sample_entry_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     auto sample_weight_buffer = impl_->context_.create_buffer(sample_weight_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     auto grad_texture_buffer = impl_->context_.create_buffer(texture_bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-    auto grad_uv_buffer = impl_->context_.create_buffer(uv_bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-    texture_buffer.upload(texture.data(), texture_bytes);
-    uv_buffer.upload(uv.data(), uv_bytes);
-    raster_buffer.upload(raster_output.raster.data(), raster_bytes);
     grad_sampled_buffer.upload(grad_sampled.data(), grad_sampled_bytes);
     texel_offset_buffer.upload(adjacency.texel_offsets.data(), texel_offset_bytes);
     sample_entry_buffer.upload(adjacency.sample_entries.data(), sample_entry_bytes);
@@ -797,32 +791,40 @@ TextureGradients Rasterizer::texture_backward(
         sizeof(grad_texture_push_constants),
         divide_round_up(static_cast<std::uint32_t>(texture.size()), BACKWARD_BLOCK_SIZE));
 
-    const Impl::TexturePushConstants grad_uv_push_constants{
-        static_cast<std::uint32_t>(pixel_count),
-        texture_desc.width,
-        texture_desc.height,
-        texture_desc.channel_count,
-        static_cast<std::uint32_t>(texture_desc.address_mode),
-    };
-    const std::vector<VkDescriptorBufferInfo> grad_uv_descriptors{
-        descriptor(texture_buffer),
-        descriptor(uv_buffer),
-        descriptor(raster_buffer),
-        descriptor(grad_sampled_buffer),
-        descriptor(grad_uv_buffer),
-    };
-    impl_->context_.dispatch(
-        impl_->texture_grad_uv_pipeline_,
-        grad_uv_descriptors,
-        &grad_uv_push_constants,
-        sizeof(grad_uv_push_constants),
-        divide_round_up(static_cast<std::uint32_t>(pixel_count), BACKWARD_BLOCK_SIZE));
-
     TextureGradients result;
     result.texture.resize(texture.size());
-    result.uv.resize(uv.size());
     grad_texture_buffer.download(result.texture.data(), texture_bytes);
-    grad_uv_buffer.download(result.uv.data(), uv_bytes);
+    if (compute_uv_gradient) {
+        auto texture_buffer = impl_->context_.create_buffer(texture_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        auto uv_buffer = impl_->context_.create_buffer(uv_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        auto raster_buffer = impl_->context_.create_buffer(raster_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        auto grad_uv_buffer = impl_->context_.create_buffer(uv_bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        texture_buffer.upload(texture.data(), texture_bytes);
+        uv_buffer.upload(uv.data(), uv_bytes);
+        raster_buffer.upload(raster_output.raster.data(), raster_bytes);
+        const Impl::TexturePushConstants grad_uv_push_constants{
+            static_cast<std::uint32_t>(pixel_count),
+            texture_desc.width,
+            texture_desc.height,
+            texture_desc.channel_count,
+            static_cast<std::uint32_t>(texture_desc.address_mode),
+        };
+        const std::vector<VkDescriptorBufferInfo> grad_uv_descriptors{
+            descriptor(texture_buffer),
+            descriptor(uv_buffer),
+            descriptor(raster_buffer),
+            descriptor(grad_sampled_buffer),
+            descriptor(grad_uv_buffer),
+        };
+        impl_->context_.dispatch(
+            impl_->texture_grad_uv_pipeline_,
+            grad_uv_descriptors,
+            &grad_uv_push_constants,
+            sizeof(grad_uv_push_constants),
+            divide_round_up(static_cast<std::uint32_t>(pixel_count), BACKWARD_BLOCK_SIZE));
+        result.uv.resize(uv.size());
+        grad_uv_buffer.download(result.uv.data(), uv_bytes);
+    }
     return result;
 }
 

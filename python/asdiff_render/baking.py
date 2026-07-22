@@ -29,6 +29,63 @@ class BakedTexture(NamedTuple):
     used_ray_query: bool
 
 
+def pad_texture_atlas(
+    color: np.ndarray,
+    valid_mask: np.ndarray,
+    padding: int,
+) -> np.ndarray:
+    """Extend valid atlas texels into empty neighbors to prevent filtered seam cracks.
+
+    The returned color is a copy. ``valid_mask`` keeps its projection-valid
+    meaning and is therefore not modified by guard texels.
+    """
+
+    color = np.asarray(color, dtype=np.float32)
+    valid = np.asarray(valid_mask, dtype=bool)
+    if color.ndim != 3 or color.shape[2] not in (3, 4):
+        raise ValueError("color must have shape [height, width, 3 or 4]")
+    if valid.shape != color.shape[:2]:
+        raise ValueError("valid_mask must match the color dimensions")
+    if padding < 0:
+        raise ValueError("padding must be non-negative")
+    result = np.ascontiguousarray(color.copy())
+    if padding == 0 or not valid.any():
+        return result
+
+    filled = valid.copy()
+    height, width = filled.shape
+    offsets = (
+        (-1, -1), (-1, 0), (-1, 1),
+        (0, -1), (0, 1),
+        (1, -1), (1, 0), (1, 1),
+    )
+    for _ in range(padding):
+        accumulated = np.zeros_like(result)
+        sample_count = np.zeros((height, width), dtype=np.uint8)
+        for dy, dx in offsets:
+            destination_y = slice(max(0, dy), min(height, height + dy))
+            destination_x = slice(max(0, dx), min(width, width + dx))
+            source_y = slice(max(0, -dy), min(height, height - dy))
+            source_x = slice(max(0, -dx), min(width, width - dx))
+            destination_valid = filled[destination_y, destination_x]
+            source_valid = filled[source_y, source_x]
+            candidates = ~destination_valid & source_valid
+            if not candidates.any():
+                continue
+            accumulated_view = accumulated[destination_y, destination_x]
+            source_view = result[source_y, source_x]
+            accumulated_view[candidates] += source_view[candidates]
+            sample_count[destination_y, destination_x][candidates] += 1
+        frontier = ~filled & (sample_count > 0)
+        if not frontier.any():
+            break
+        result[frontier] = accumulated[frontier] / sample_count[frontier, None]
+        if result.shape[2] == 4:
+            result[frontier, 3] = 1.0
+        filled[frontier] = True
+    return result
+
+
 def _compute_vertex_normals(positions: np.ndarray, indices: np.ndarray) -> np.ndarray:
     normals = np.zeros_like(positions, dtype=np.float32)
     triangles = positions[indices]
@@ -102,6 +159,7 @@ def project_texture_atlas(
     visibility_mode: str = "hybrid_ray_query",
     pcf_radius: int = 1,
     allow_visibility_fallback: bool = True,
+    padding: int = 0,
 ) -> BakedTexture:
     """Project calibrated photographs into atlas space with shadow and optional ray visibility."""
 
@@ -130,4 +188,7 @@ def project_texture_atlas(
         pcf_radius=pcf_radius,
         allow_visibility_fallback=allow_visibility_fallback,
     )
-    return BakedTexture(*output)
+    baked = BakedTexture(*output)
+    if padding:
+        baked = baked._replace(color=pad_texture_atlas(baked.color, baked.valid_mask, padding))
+    return baked

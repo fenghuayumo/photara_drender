@@ -164,15 +164,17 @@ class _TextureFunction(torch.autograd.Function):
         uv_numpy = uv.cpu().contiguous().numpy()
         raster_numpy = raster.cpu().contiguous().numpy()
         grad_numpy = grad_sampled.detach().cpu().contiguous().numpy().astype(np.float32, copy=False)
+        compute_uv_gradient = ctx.needs_input_grad[1]
         grad_texture_numpy, grad_uv_numpy = ctx.rasterizer.texture_backward(
             texture_numpy,
             uv_numpy,
             raster_numpy,
             grad_numpy,
             ctx.address_mode,
+            compute_uv_gradient,
         )
         grad_texture = torch.from_numpy(grad_texture_numpy).to(device=texture_values.device)
-        grad_uv = torch.from_numpy(grad_uv_numpy).to(device=uv.device)
+        grad_uv = None if grad_uv_numpy is None else torch.from_numpy(grad_uv_numpy).to(device=uv.device)
         return grad_texture, grad_uv, None, None, None
 
 

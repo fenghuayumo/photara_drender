@@ -30,6 +30,7 @@ class AtlasOptimizationOptions:
     address_mode: str = "clamp"
     clamp_min: float = 0.0
     clamp_max: float = 1.0
+    cache_view_rasters: bool = False
 
 
 def render_textured_mesh(
@@ -182,28 +183,47 @@ def optimize_texture_atlas(
     initial_reference = initial_texture.detach().clone()
     optimizer = torch.optim.Adam([texture_parameter], lr=options.learning_rate)
     history: List[float] = []
+    view_cache: dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
     for step in range(options.steps):
         optimizer.zero_grad(set_to_none=True)
         view_index = step % view_count
         target = target_images[view_index]
-        render = render_textured_mesh(
-            clip_positions_by_view[view_index],
-            indices,
-            vertex_uv,
-            texture_parameter,
-            target.shape[:2],
-            rasterizer=rasterizer,
-            viewport=viewports[view_index],
-            address_mode=options.address_mode,
-        )
-        valid_mask = render.valid_mask
+        cached = view_cache.get(view_index)
+        if cached is None:
+            render = render_textured_mesh(
+                clip_positions_by_view[view_index],
+                indices,
+                vertex_uv,
+                texture_parameter,
+                target.shape[:2],
+                rasterizer=rasterizer,
+                viewport=viewports[view_index],
+                address_mode=options.address_mode,
+            )
+            image = render.image
+            valid_mask = render.valid_mask
+            if options.cache_view_rasters:
+                view_cache[view_index] = (
+                    render.raster.detach(),
+                    render.uv.detach(),
+                    render.valid_mask.detach(),
+                )
+        else:
+            cached_raster, cached_uv, valid_mask = cached
+            image = sample_texture(
+                texture_parameter,
+                cached_uv,
+                cached_raster,
+                rasterizer=rasterizer,
+                address_mode=options.address_mode,
+            )
         external_mask = visibility_masks[view_index]
         if external_mask is not None:
             if external_mask.ndim == 2:
                 external_mask = external_mask[..., None]
             valid_mask = valid_mask * external_mask.to(device=valid_mask.device, dtype=valid_mask.dtype)
         loss = masked_charbonnier_loss(
-            render.image,
+            image,
             target,
             valid_mask,
             epsilon=options.photometric_epsilon,

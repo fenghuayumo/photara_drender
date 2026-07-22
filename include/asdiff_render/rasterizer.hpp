@@ -55,7 +55,8 @@ public:
         const TextureDesc& texture_desc,
         std::span<const float> uv,
         const RasterizeOutput& raster_output,
-        std::span<const float> grad_sampled);
+        std::span<const float> grad_sampled,
+        bool compute_uv_gradient = true);
 
 private:
     class Impl;
