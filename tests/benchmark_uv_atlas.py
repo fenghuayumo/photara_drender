@@ -11,7 +11,7 @@ import time
 import numpy as np
 import trimesh
 
-import asdiff_render
+import aether_drender
 
 
 def main() -> None:
@@ -33,7 +33,7 @@ def main() -> None:
     indices = mesh.faces.astype("uint32")
     normals = np.ascontiguousarray(mesh.vertex_normals, dtype=np.float32)
     begin = time.perf_counter()
-    result = asdiff_render.unwrap_uv(
+    result = aether_drender.unwrap_uv(
         positions,
         indices,
         resolution=(arguments.resolution, arguments.resolution),

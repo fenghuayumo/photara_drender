@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace asdiff_render {
+namespace aether_drender {
 
 enum class CullMode : std::uint32_t {
     none = 0,
@@ -185,4 +185,4 @@ struct TextureRefineOutput {
     double optimization_seconds = 0.0;
 };
 
-} // namespace asdiff_render
+} // namespace aether_drender

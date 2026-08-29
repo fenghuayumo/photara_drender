@@ -1,6 +1,6 @@
-"""Python interface for asdiff_render."""
+"""Python interface for aether_drender."""
 
-from ._asdiff_render import (
+from ._aether_drender import (
     DeviceInfo,
     Rasterizer,
     TextureBaker,

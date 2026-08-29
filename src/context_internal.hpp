@@ -10,9 +10,9 @@
 
 #include <vulkan/vulkan.h>
 
-#include "asdiff_render/context.hpp"
+#include "aether_drender/context.hpp"
 
-namespace asdiff_render {
+namespace aether_drender {
 
 struct Buffer {
     VkDevice device = VK_NULL_HANDLE;
@@ -139,4 +139,4 @@ public:
     mutable std::mutex dispatch_mutex;
 };
 
-} // namespace asdiff_render
+} // namespace aether_drender

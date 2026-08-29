@@ -24,7 +24,7 @@
 #include "atlas_seam_gradient.hlsl.embedded.hpp"
 #include "atlas_adam_update.hlsl.embedded.hpp"
 
-namespace asdiff_render {
+namespace aether_drender {
 namespace {
 
 bool query_ray_query_support(VkPhysicalDevice physical_device);
@@ -84,14 +84,14 @@ std::optional<std::filesystem::path> shader_directory_override() {
 #ifdef _WIN32
     char* raw_value = nullptr;
     std::size_t value_size = 0;
-    if (_dupenv_s(&raw_value, &value_size, "ASDIFF_SHADER_DIR") != 0 || raw_value == nullptr) {
+    if (_dupenv_s(&raw_value, &value_size, "AETHER_SHADER_DIR") != 0 || raw_value == nullptr) {
         return std::nullopt;
     }
     std::filesystem::path value(raw_value);
     std::free(raw_value);
     return value;
 #else
-    const char* raw_value = std::getenv("ASDIFF_SHADER_DIR");
+    const char* raw_value = std::getenv("AETHER_SHADER_DIR");
     return raw_value == nullptr ? std::nullopt : std::optional<std::filesystem::path>(raw_value);
 #endif
 }
@@ -426,7 +426,7 @@ ComputePipeline& ComputePipeline::operator=(ComputePipeline&& other) noexcept {
 }
 
 Context::Impl::Impl(const ContextOptions& options) {
-    const bool validation_enabled = options.enable_validation || ASDIFF_ENABLE_VALIDATION;
+    const bool validation_enabled = options.enable_validation || AETHER_ENABLE_VALIDATION;
     std::vector<const char*> layers;
     std::vector<const char*> extensions;
     if (validation_enabled) {
@@ -445,9 +445,9 @@ Context::Impl::Impl(const ContextOptions& options) {
 #endif
 
     VkApplicationInfo application_info{VK_STRUCTURE_TYPE_APPLICATION_INFO};
-    application_info.pApplicationName = "asdiff_render";
+    application_info.pApplicationName = "aether_drender";
     application_info.applicationVersion = VK_MAKE_API_VERSION(0, 0, 1, 0);
-    application_info.pEngineName = "asdiff_render";
+    application_info.pEngineName = "aether_drender";
     application_info.engineVersion = VK_MAKE_API_VERSION(0, 0, 1, 0);
     application_info.apiVersion = VK_API_VERSION_1_2;
     VkInstanceCreateInfo instance_info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
@@ -890,7 +890,7 @@ const DeviceInfo& Context::device_info() const noexcept {
 
 std::vector<DeviceInfo> Context::enumerate_devices() {
     VkApplicationInfo application_info{VK_STRUCTURE_TYPE_APPLICATION_INFO};
-    application_info.pApplicationName = "asdiff_render_device_enumeration";
+    application_info.pApplicationName = "aether_drender_device_enumeration";
     application_info.apiVersion = VK_API_VERSION_1_2;
     VkInstanceCreateInfo create_info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     create_info.pApplicationInfo = &application_info;
@@ -920,4 +920,4 @@ std::vector<DeviceInfo> Context::enumerate_devices() {
     return result;
 }
 
-} // namespace asdiff_render
+} // namespace aether_drender

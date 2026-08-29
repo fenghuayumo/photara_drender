@@ -1,13 +1,13 @@
 // Instant Meshes field-aligned remeshing backend (BSD), fetched via FetchContent.
-// Kept outside the MIT asdiff_render library; linked only into optional asdiff_mesh.
+// Kept outside the MIT aether_drender library; linked only into optional aether_mesh.
 
-#include "asdiff_mesh/mesh_ops.hpp"
+#include "aether_mesh/mesh_ops.hpp"
 
 #include <stdexcept>
 
-#if !ASDIFF_HAS_INSTANT_MESHES
+#if !AETHER_HAS_INSTANT_MESHES
 
-namespace asdiff_mesh {
+namespace aether_mesh {
 
 bool has_instant_meshes_backend() noexcept {
     return false;
@@ -18,10 +18,10 @@ TriangleMesh remesh_field_aligned(
     std::span<const std::uint32_t>,
     const RemeshOptions&) {
     throw std::runtime_error(
-        "Instant Meshes support was not built; configure with ASDIFF_ENABLE_INSTANT_MESHES=ON");
+        "Instant Meshes support was not built; configure with AETHER_ENABLE_INSTANT_MESHES=ON");
 }
 
-} // namespace asdiff_mesh
+} // namespace aether_mesh
 
 #else
 
@@ -45,7 +45,7 @@ TriangleMesh remesh_field_aligned(
 #include <streambuf>
 #include <vector>
 
-namespace asdiff_mesh {
+namespace aether_mesh {
 namespace {
 
 class NullStreamBuffer final : public std::streambuf {
@@ -307,6 +307,6 @@ TriangleMesh remesh_field_aligned(
     return triangulate_extracted_mesh(O_extr, F_extr);
 }
 
-} // namespace asdiff_mesh
+} // namespace aether_mesh
 
 #endif

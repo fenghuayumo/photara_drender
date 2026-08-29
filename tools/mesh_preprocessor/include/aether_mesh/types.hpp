@@ -1,11 +1,11 @@
-// Optional GPL/commercial CGAL mesh tooling. Not part of the MIT asdiff_render library.
+// Optional GPL/commercial CGAL mesh tooling. Not part of the MIT aether_drender library.
 
 #pragma once
 
 #include <cstdint>
 #include <vector>
 
-namespace asdiff_mesh {
+namespace aether_mesh {
 
 struct TriangleMesh {
     std::vector<float> positions;
@@ -42,4 +42,4 @@ struct RemeshOptions {
     bool deterministic = true;
 };
 
-} // namespace asdiff_mesh
+} // namespace aether_mesh

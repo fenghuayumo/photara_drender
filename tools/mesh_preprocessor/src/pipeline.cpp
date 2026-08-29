@@ -1,15 +1,15 @@
 // This optional library uses CGAL Surface Mesh Simplification, licensed separately under
-// GPL-3.0-or-later or a commercial CGAL license. It is not linked into asdiff_render.
+// GPL-3.0-or-later or a commercial CGAL license. It is not linked into aether_drender.
 
-#include "asdiff_mesh/pipeline.hpp"
+#include "aether_mesh/pipeline.hpp"
 
-#include "asdiff_mesh/mesh_ops.hpp"
-#include "asdiff_render/uv_atlas.hpp"
+#include "aether_mesh/mesh_ops.hpp"
+#include "aether_drender/uv_atlas.hpp"
 
 #include <cmath>
 #include <stdexcept>
 
-namespace asdiff_mesh {
+namespace aether_mesh {
 
 std::vector<float> compute_vertex_normals(
     std::span<const float> positions,
@@ -71,7 +71,7 @@ PreparedBakeMesh prepare_for_baking(
 
     const auto source_normals =
         compute_vertex_normals(prepared.manifold.positions, prepared.manifold.indices);
-    const auto unwrapped = asdiff_render::unwrap_uv(
+    const auto unwrapped = aether_drender::unwrap_uv(
         prepared.manifold.positions, prepared.manifold.indices, options.atlas);
 
     prepared.positions = unwrapped.positions;
@@ -92,25 +92,25 @@ PreparedBakeMesh prepare_for_baking(
     return prepared;
 }
 
-asdiff_render::TextureBakeOutput bake_texture_atlas(
-    asdiff_render::TextureBaker& baker,
+aether_drender::TextureBakeOutput bake_texture_atlas(
+    aether_drender::TextureBaker& baker,
     const PreparedBakeMesh& mesh,
-    std::span<const asdiff_render::ProjectionView> views,
-    const asdiff_render::TextureBakeOptions& options) {
+    std::span<const aether_drender::ProjectionView> views,
+    const aether_drender::TextureBakeOptions& options) {
     return baker.bake(mesh.positions, mesh.normals, mesh.uv, mesh.indices, views, options);
 }
 
 BakePipelineResult prepare_and_bake(
-    asdiff_render::Context& context,
+    aether_drender::Context& context,
     std::span<const float> positions,
     std::span<const std::uint32_t> triangle_indices,
-    std::span<const asdiff_render::ProjectionView> views,
+    std::span<const aether_drender::ProjectionView> views,
     const BakePipelineOptions& options) {
     BakePipelineResult result;
     result.mesh = prepare_for_baking(positions, triangle_indices, options.prepare);
-    asdiff_render::TextureBaker baker(context);
+    aether_drender::TextureBaker baker(context);
     result.texture = bake_texture_atlas(baker, result.mesh, views, options.bake);
     return result;
 }
 
-} // namespace asdiff_mesh
+} // namespace aether_mesh

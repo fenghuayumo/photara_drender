@@ -1,4 +1,4 @@
-// Optional GPL/commercial CGAL mesh tooling. Not part of the MIT asdiff_render library.
+// Optional GPL/commercial CGAL mesh tooling. Not part of the MIT aether_drender library.
 
 #pragma once
 
@@ -7,17 +7,17 @@
 #include <span>
 #include <vector>
 
-#include "asdiff_mesh/types.hpp"
-#include "asdiff_render/texture_baker.hpp"
-#include "asdiff_render/types.hpp"
+#include "aether_mesh/types.hpp"
+#include "aether_drender/texture_baker.hpp"
+#include "aether_drender/types.hpp"
 
-namespace asdiff_mesh {
+namespace aether_mesh {
 
 struct PrepareOptions {
     DecimateOptions decimate;
     RemeshOptions remesh;
     bool use_instant_remesh = false;
-    asdiff_render::UvAtlasOptions atlas;
+    aether_drender::UvAtlasOptions atlas;
 };
 
 struct PreparedBakeMesh {
@@ -36,12 +36,12 @@ struct PreparedBakeMesh {
 
 struct BakePipelineOptions {
     PrepareOptions prepare;
-    asdiff_render::TextureBakeOptions bake;
+    aether_drender::TextureBakeOptions bake;
 };
 
 struct BakePipelineResult {
     PreparedBakeMesh mesh;
-    asdiff_render::TextureBakeOutput texture;
+    aether_drender::TextureBakeOutput texture;
 };
 
 [[nodiscard]] std::vector<float> compute_vertex_normals(
@@ -53,17 +53,17 @@ struct BakePipelineResult {
     std::span<const std::uint32_t> triangle_indices,
     const PrepareOptions& options = {});
 
-[[nodiscard]] asdiff_render::TextureBakeOutput bake_texture_atlas(
-    asdiff_render::TextureBaker& baker,
+[[nodiscard]] aether_drender::TextureBakeOutput bake_texture_atlas(
+    aether_drender::TextureBaker& baker,
     const PreparedBakeMesh& mesh,
-    std::span<const asdiff_render::ProjectionView> views,
-    const asdiff_render::TextureBakeOptions& options = {});
+    std::span<const aether_drender::ProjectionView> views,
+    const aether_drender::TextureBakeOptions& options = {});
 
 [[nodiscard]] BakePipelineResult prepare_and_bake(
-    asdiff_render::Context& context,
+    aether_drender::Context& context,
     std::span<const float> positions,
     std::span<const std::uint32_t> triangle_indices,
-    std::span<const asdiff_render::ProjectionView> views,
+    std::span<const aether_drender::ProjectionView> views,
     const BakePipelineOptions& options = {});
 
-} // namespace asdiff_mesh
+} // namespace aether_mesh

@@ -1,9 +1,9 @@
 # Mesh preprocessing and COLMAP baking
 
-The production ordering is entirely in-memory when `ASDIFF_BUILD_MESH_TOOLS=ON`:
+The production ordering is entirely in-memory when `AETHER_BUILD_MESH_TOOLS=ON`:
 
 1. Instant Meshes optionally remeshes the input in memory via FetchContent'd Instant Meshes
-   (`ASDIFF_ENABLE_INSTANT_MESHES=ON`, default when mesh tools are enabled).
+   (`AETHER_ENABLE_INSTANT_MESHES=ON`, default when mesh tools are enabled).
 2. CGAL repairs and orients the source or remeshed polygon soup in memory, duplicates
    combinatorially non-manifold vertices, removes degeneracies, stitches compatible
    borders, and removes isolated vertices.
@@ -12,19 +12,19 @@ The production ordering is entirely in-memory when `ASDIFF_BUILD_MESH_TOOLS=ON`:
 4. Microsoft UVAtlas unwraps the validated triangle manifold.
 5. `TextureBaker` projects calibrated photographs into atlas space.
 
-C++ API (GPL/commercial optional library `asdiff::mesh`):
+C++ API (GPL/commercial optional library `aether::mesh`):
 
 ```cpp
-#include "asdiff_mesh/mesh_ops.hpp"
-#include "asdiff_mesh/pipeline.hpp"
+#include "aether_mesh/mesh_ops.hpp"
+#include "aether_mesh/pipeline.hpp"
 
-auto manifold = asdiff_mesh::repair_and_decimate(positions, indices, {.target_face_count = 1'000'000});
-auto prepared = asdiff_mesh::prepare_for_baking(positions, indices, prepare_options);
-auto baked = asdiff_mesh::prepare_and_bake(context, positions, indices, views, pipeline_options);
+auto manifold = aether_mesh::repair_and_decimate(positions, indices, {.target_face_count = 1'000'000});
+auto prepared = aether_mesh::prepare_for_baking(positions, indices, prepare_options);
+auto baked = aether_mesh::prepare_and_bake(context, positions, indices, views, pipeline_options);
 ```
 
-`asdiff_mesh` links CGAL and therefore stays outside the MIT `asdiff_render` library.
-The CLI `asdiff_mesh_preprocessor` is only a thin file I/O wrapper around the same
+`aether_mesh` links CGAL and therefore stays outside the MIT `aether_drender` library.
+The CLI `aether_mesh_preprocessor` is only a thin file I/O wrapper around the same
 memory API.
 
 The CGAL tool guarantees a valid topological triangle manifold. A mesh may intentionally remain open, so “manifold”
@@ -36,17 +36,17 @@ On Windows with the local vcpkg CGAL installation:
 ```powershell
 cmake -S . -B build_cgal `
   -DCMAKE_TOOLCHAIN_FILE=D:/ProgramTool/vcpkg/scripts/buildsystems/vcpkg.cmake `
-  -DASDIFF_BUILD_MESH_TOOLS=ON `
-  -DASDIFF_ENABLE_INSTANT_MESHES=ON `
-  -DASDIFF_UVATLAS_USE_OPENMP=OFF
+  -DAETHER_BUILD_MESH_TOOLS=ON `
+  -DAETHER_ENABLE_INSTANT_MESHES=ON `
+  -DAETHER_UVATLAS_USE_OPENMP=OFF
 cmake --build build_cgal --config Release
 ```
 
-The Python API locates the installed `asdiff_render/tools/asdiff_mesh_preprocessor.exe`, an explicit
-`cgal_executable`, or `ASDIFF_MESH_PREPROCESSOR`.
+The Python API locates the installed `aether_drender/tools/aether_mesh_preprocessor.exe`, an explicit
+`cgal_executable`, or `AETHER_MESH_PREPROCESSOR`.
 
 UVAtlas oct2025 contains an internal OpenMP region in chart parameterization. It is disabled by default because it
-oversubscribes the CPU when several PCA partitions are charted concurrently. Enable `ASDIFF_UVATLAS_USE_OPENMP` only
+oversubscribes the CPU when several PCA partitions are charted concurrently. Enable `AETHER_UVATLAS_USE_OPENMP` only
 for builds that use `parallel_partitions=1`.
 
 The preparation defaults mirror Open3D's UVAtlas parameters: `gutter=1`, `max_stretch=1/6`, and

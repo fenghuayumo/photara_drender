@@ -1,7 +1,0 @@
-// Optional GPL/commercial CGAL mesh tooling. Not part of the MIT asdiff_render library.
-
-#pragma once
-
-#include "asdiff_mesh/mesh_ops.hpp"
-#include "asdiff_mesh/pipeline.hpp"
-#include "asdiff_mesh/types.hpp"

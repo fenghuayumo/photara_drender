@@ -9,7 +9,7 @@ import time
 import numpy as np
 from PIL import Image
 
-import asdiff_render
+import aether_drender
 from texture_workflow import (
     dense_seam_pairs,
     erode_masks,
@@ -69,14 +69,14 @@ def main() -> None:
 
     mesh = load_mesh(Path(arguments.mesh_npz))
     try:
-        source_images_path = asdiff_render.resolve_texture_images_path(
+        source_images_path = aether_drender.resolve_texture_images_path(
             arguments.images_path,
             texture_source=arguments.texture_source,
             delighted_images_path=arguments.delighted_images_path,
         )
     except FileNotFoundError as error:
         raise SystemExit(str(error)) from error
-    projection = asdiff_render.load_colmap_projection(
+    projection = aether_drender.load_colmap_projection(
         arguments.sparse_path,
         source_images_path,
         mesh_positions=mesh.positions,
@@ -84,10 +84,10 @@ def main() -> None:
     )
     masks = None
     if arguments.masks_path:
-        masks = asdiff_render.load_projection_masks(arguments.masks_path, projection.image_names)
-    baker = asdiff_render.TextureBaker(device_index=arguments.device_index)
+        masks = aether_drender.load_projection_masks(arguments.masks_path, projection.image_names)
+    baker = aether_drender.TextureBaker(device_index=arguments.device_index)
     start_time = time.perf_counter()
-    baked = asdiff_render.project_texture_atlas(
+    baked = aether_drender.project_texture_atlas(
         mesh,
         projection.images,
         projection.world_to_clip,

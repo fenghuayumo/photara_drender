@@ -23,18 +23,18 @@
 Microsoft UVAtlas；也可以使用系统安装包或关闭该后端。
 
 ```powershell
-cmake -S . -B build -DASDIFF_BUILD_PYTHON=ON -DASDIFF_BUILD_TESTS=ON
+cmake -S . -B build -DAETHER_BUILD_PYTHON=ON -DAETHER_BUILD_TESTS=ON
 cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
 相关选项：
 
-- `ASDIFF_ENABLE_UVATLAS=OFF`：只构建渲染和投影模块；
-- `ASDIFF_FETCH_UVATLAS=OFF`：要求环境中存在 `uvatlas` CMake package；
-- `ASDIFF_UVATLAS_USE_OPENMP=ON`：启用 UVAtlas 上游的 OpenMP chart 参数化；
-- `ASDIFF_BUILD_MESH_TOOLS=ON`：构建使用 CGAL 的流形修复与 Decimation 工具；
-- `ASDIFF_ENABLE_VALIDATION=ON`：启用 Vulkan validation layer。
+- `AETHER_ENABLE_UVATLAS=OFF`：只构建渲染和投影模块；
+- `AETHER_FETCH_UVATLAS=OFF`：要求环境中存在 `uvatlas` CMake package；
+- `AETHER_UVATLAS_USE_OPENMP=ON`：启用 UVAtlas 上游的 OpenMP chart 参数化；
+- `AETHER_BUILD_MESH_TOOLS=ON`：构建使用 CGAL 的流形修复与 Decimation 工具；
+- `AETHER_ENABLE_VALIDATION=ON`：启用 Vulkan validation layer。
 
 Python wheel 可以使用 `python -m pip wheel .` 构建。
 
@@ -42,7 +42,7 @@ Python wheel 可以使用 `python -m pip wheel .` 构建。
 
 ```python
 import numpy as np
-from asdiff_render import project_texture_atlas, unwrap_mesh_uv
+from aether_drender import project_texture_atlas, unwrap_mesh_uv
 
 mesh = unwrap_mesh_uv(
     positions,
@@ -74,7 +74,7 @@ source_view = baked.source_view
 
 ## 扫描 mesh 完整流水线
 
-`prepare_mesh_for_baking()` / C++ `asdiff_mesh::prepare_for_baking()` 在内存中完成
+`prepare_mesh_for_baking()` / C++ `aether_mesh::prepare_for_baking()` 在内存中完成
 CGAL 流形修复、保边界 Decimation 和并行 UVAtlas，不再经中间 PLY/子进程。质量档位为
 `high=100万`（默认）、`medium=50万`、`low=10万` 面；Instant Meshes 可按需开启。
 

@@ -8,7 +8,7 @@ import sys
 import numpy as np
 import torch
 
-from asdiff_render import Rasterizer
+from aether_drender import Rasterizer
 
 
 def main() -> None:

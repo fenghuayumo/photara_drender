@@ -17,7 +17,7 @@ baking = ["Pillow>=10.0", "trimesh>=4.0", "pynanoinstantmeshes>=0.0.3"]
 
 [tool.scikit-build]
 cmake.build-type = "Release"
-wheel.packages = ["python/asdiff_render"]
+wheel.packages = ["python/aether_drender"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

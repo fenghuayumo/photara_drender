@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <vector>
 
-#include "asdiff_render/asdiff_render.hpp"
+#include "aether_drender/aether_drender.hpp"
 
 namespace {
 
@@ -15,7 +15,7 @@ void require(bool condition, const char* message) {
     }
 }
 
-float sum_channel(const asdiff_render::RasterizeOutput& output, std::uint32_t channel) {
+float sum_channel(const aether_drender::RasterizeOutput& output, std::uint32_t channel) {
     float sum = 0.0F;
     for (std::size_t i = channel; i < output.raster.size(); i += 4) {
         sum += output.raster[i];
@@ -27,15 +27,15 @@ float sum_channel(const asdiff_render::RasterizeOutput& output, std::uint32_t ch
 
 int main() {
     try {
-        asdiff_render::Context context;
-        asdiff_render::Rasterizer rasterizer(context);
+        aether_drender::Context context;
+        aether_drender::Rasterizer rasterizer(context);
         const std::vector<float> positions{
             -0.75F, -0.75F, 0.0F, 1.0F,
              0.75F, -0.75F, 0.0F, 1.0F,
              0.00F,  0.75F, 0.0F, 1.0F,
         };
         const std::vector<std::uint32_t> indices{0, 1, 2};
-        const asdiff_render::RasterizeOptions options{32, 32, asdiff_render::CullMode::none, true};
+        const aether_drender::RasterizeOptions options{32, 32, aether_drender::CullMode::none, true};
         const auto output = rasterizer.forward(positions, indices, options);
         require(output.raster.size() == 32 * 32 * 4, "Unexpected raster size");
         require(output.barycentric_derivatives.size() == output.raster.size(), "Unexpected derivative size");
@@ -91,7 +91,7 @@ int main() {
                 texture[(y * 4 + x) * 2 + 1] = static_cast<float>(static_cast<std::int32_t>(x * 3) - static_cast<std::int32_t>(y));
             }
         }
-        const asdiff_render::TextureDesc texture_desc{4, 4, 2, asdiff_render::AddressMode::clamp};
+        const aether_drender::TextureDesc texture_desc{4, 4, 2, aether_drender::AddressMode::clamp};
         const auto sampled = rasterizer.texture_forward(texture, texture_desc, interpolated_uv.values, output);
         require(sampled.values.size() == 32 * 32 * 2, "Unexpected texture sample output size");
         std::vector<float> grad_sampled(sampled.values.size(), 0.0F);
@@ -138,7 +138,7 @@ int main() {
                 "Analytical texture gradient failed finite-difference validation");
 
         auto viewport_options = options;
-        viewport_options.viewport = asdiff_render::Viewport{8.0F, 4.0F, 16.0F, 20.0F};
+        viewport_options.viewport = aether_drender::Viewport{8.0F, 4.0F, 16.0F, 20.0F};
         const auto viewport_output = rasterizer.forward(positions, indices, viewport_options);
         for (std::uint32_t y = 0; y < viewport_output.height; ++y) {
             for (std::uint32_t x = 0; x < viewport_output.width; ++x) {
@@ -168,12 +168,12 @@ int main() {
             0.875F, 0.125F,
             0.500F, 0.875F,
         };
-        if (asdiff_render::has_uv_atlas_backend()) {
-            asdiff_render::UvAtlasOptions unwrap_options;
+        if (aether_drender::has_uv_atlas_backend()) {
+            aether_drender::UvAtlasOptions unwrap_options;
             unwrap_options.width = 64;
             unwrap_options.height = 64;
             unwrap_options.gutter = 2.0F;
-            const auto unwrapped = asdiff_render::unwrap_uv(world_positions, indices, unwrap_options);
+            const auto unwrapped = aether_drender::unwrap_uv(world_positions, indices, unwrap_options);
             require(!unwrapped.positions.empty() && unwrapped.uv.size() / 2 == unwrapped.positions.size() / 3,
                     "UVAtlas returned invalid vertex data");
             require(unwrapped.indices.size() == indices.size(), "UVAtlas returned an invalid index count");
@@ -181,7 +181,7 @@ int main() {
 
             unwrap_options.parallel_partitions = 2;
             const auto parallel_unwrapped =
-                asdiff_render::unwrap_uv(world_positions, indices, unwrap_options);
+                aether_drender::unwrap_uv(world_positions, indices, unwrap_options);
             require(parallel_unwrapped.indices.size() == indices.size(),
                     "parallel UVAtlas returned an invalid index count");
             require(parallel_unwrapped.face_chart_ids.size() == indices.size() / 3,
@@ -217,7 +217,7 @@ int main() {
             };
             bool rejected_non_manifold = false;
             try {
-                static_cast<void>(asdiff_render::unwrap_uv(
+                static_cast<void>(aether_drender::unwrap_uv(
                     non_manifold_positions, non_manifold_indices, unwrap_options));
             } catch (const std::invalid_argument&) {
                 rejected_non_manifold = true;
@@ -225,7 +225,7 @@ int main() {
             require(rejected_non_manifold, "UVAtlas accepted a non-manifold edge");
         }
 
-        asdiff_render::ProjectionView projection_view;
+        aether_drender::ProjectionView projection_view;
         projection_view.width = 16;
         projection_view.height = 16;
         projection_view.channel_count = 4;
@@ -243,14 +243,14 @@ int main() {
             0.0F, 0.0F, 0.0F, 1.0F,
         };
         projection_view.camera_position = {0.0F, 0.0F, 2.0F};
-        asdiff_render::TextureBakeOptions bake_options;
+        aether_drender::TextureBakeOptions bake_options;
         bake_options.width = 16;
         bake_options.height = 16;
-        bake_options.blend_mode = asdiff_render::ProjectionBlendMode::weighted_average;
-        asdiff_render::TextureBaker texture_baker(context);
+        bake_options.blend_mode = aether_drender::ProjectionBlendMode::weighted_average;
+        aether_drender::TextureBaker texture_baker(context);
         const auto baked = texture_baker.bake(
             world_positions, world_normals, bake_uv, indices,
-            std::span<const asdiff_render::ProjectionView>(&projection_view, 1), bake_options);
+            std::span<const aether_drender::ProjectionView>(&projection_view, 1), bake_options);
         require(baked.color.size() == 16 * 16 * 4, "Unexpected baked atlas size");
         require(std::ranges::any_of(baked.valid_mask, [](float value) { return value > 0.5F; }),
                 "Texture projection did not produce valid atlas texels");
@@ -262,11 +262,11 @@ int main() {
         require(std::abs(baked.color[valid_index * 4 + 0] - 0.8F) < 1e-4F,
                 "Texture projection returned an incorrect color");
         if (context.device_info().supports_ray_query) {
-            bake_options.visibility_mode = asdiff_render::VisibilityMode::ray_query;
+            bake_options.visibility_mode = aether_drender::VisibilityMode::ray_query;
             bake_options.allow_visibility_fallback = false;
             const auto ray_baked = texture_baker.bake(
                 world_positions, world_normals, bake_uv, indices,
-                std::span<const asdiff_render::ProjectionView>(&projection_view, 1), bake_options);
+                std::span<const aether_drender::ProjectionView>(&projection_view, 1), bake_options);
             require(ray_baked.used_ray_query, "Texture projection did not use Vulkan ray queries");
             require(std::ranges::any_of(ray_baked.valid_mask, [](float value) { return value > 0.5F; }),
                     "Ray-query texture projection rejected every visible texel");

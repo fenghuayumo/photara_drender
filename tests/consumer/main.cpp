@@ -1,15 +1,15 @@
 #include <iostream>
 
-#include "asdiff_render/asdiff_render.hpp"
+#include "aether_drender/aether_drender.hpp"
 
 int main() {
-    const auto devices = asdiff_render::Context::enumerate_devices();
+    const auto devices = aether_drender::Context::enumerate_devices();
     std::cout << devices.size() << '\n';
     if (devices.empty()) {
         return 1;
     }
-    asdiff_render::Context context;
-    asdiff_render::Rasterizer rasterizer(context);
+    aether_drender::Context context;
+    aether_drender::Rasterizer rasterizer(context);
     const float positions[] = {
         -0.5F, -0.5F, 0.0F, 1.0F,
          0.5F, -0.5F, 0.0F, 1.0F,

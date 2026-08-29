@@ -3,10 +3,10 @@
 #include <memory>
 #include <span>
 
-#include "asdiff_render/context.hpp"
-#include "asdiff_render/types.hpp"
+#include "aether_drender/context.hpp"
+#include "aether_drender/types.hpp"
 
-namespace asdiff_render {
+namespace aether_drender {
 
 class TextureRefiner {
 public:
@@ -32,4 +32,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace asdiff_render
+} // namespace aether_drender

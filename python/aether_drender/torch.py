@@ -11,7 +11,7 @@ from typing import Optional, Sequence, Tuple
 import numpy as np
 import torch
 
-from ._asdiff_render import Rasterizer
+from ._aether_drender import Rasterizer
 
 
 class _RasterizeFunction(torch.autograd.Function):

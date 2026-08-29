@@ -1,12 +1,12 @@
-// Optional GPL/commercial CGAL mesh tooling. Not part of the MIT asdiff_render library.
+// Optional GPL/commercial CGAL mesh tooling. Not part of the MIT aether_drender library.
 
 #pragma once
 
 #include <span>
 
-#include "asdiff_mesh/types.hpp"
+#include "aether_mesh/types.hpp"
 
-namespace asdiff_mesh {
+namespace aether_mesh {
 
 [[nodiscard]] bool has_instant_meshes_backend() noexcept;
 
@@ -32,4 +32,4 @@ namespace asdiff_mesh {
     std::span<const std::uint32_t> triangle_indices,
     bool check_self_intersections = false);
 
-} // namespace asdiff_mesh
+} // namespace aether_mesh

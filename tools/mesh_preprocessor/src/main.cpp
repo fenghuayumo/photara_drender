@@ -1,5 +1,5 @@
-// Optional CLI wrapper around the in-memory asdiff_mesh API.
-// Uses CGAL (GPL-3.0-or-later/commercial) and is not linked into asdiff_render.
+// Optional CLI wrapper around the in-memory aether_mesh API.
+// Uses CGAL (GPL-3.0-or-later/commercial) and is not linked into aether_drender.
 
 #include <CGAL/IO/polygon_mesh_io.h>
 #include <CGAL/IO/polygon_soup_io.h>
@@ -15,7 +15,7 @@
 #include <string_view>
 #include <vector>
 
-#include "asdiff_mesh/mesh_ops.hpp"
+#include "aether_mesh/mesh_ops.hpp"
 
 namespace {
 
@@ -57,7 +57,7 @@ std::size_t parse_count(const char* value) {
 int main(int argc, char** argv) {
     try {
         if (argc < 4 || argc > 5) {
-            std::cerr << "usage: asdiff_mesh_preprocessor <input> <output> <target_face_count> "
+            std::cerr << "usage: aether_mesh_preprocessor <input> <output> <target_face_count> "
                          "[--check-self-intersections]\n";
             return 2;
         }
@@ -97,7 +97,7 @@ int main(int argc, char** argv) {
             }
         }
 
-        asdiff_mesh::TriangleMesh result;
+        aether_mesh::TriangleMesh result;
         if (corners >= 3) {
             std::vector<std::uint32_t> face_indices;
             face_indices.reserve(soup_polygons.size() * corners);
@@ -106,11 +106,11 @@ int main(int argc, char** argv) {
                     face_indices.push_back(static_cast<std::uint32_t>(index));
                 }
             }
-            result = asdiff_mesh::repair_and_decimate(
+            result = aether_mesh::repair_and_decimate(
                 positions,
                 face_indices,
                 corners,
-                asdiff_mesh::DecimateOptions{target_face_count, check_self_intersections});
+                aether_mesh::DecimateOptions{target_face_count, check_self_intersections});
         } else {
             // Fan-triangulate mixed polygons in memory before repair/decimate.
             std::vector<std::uint32_t> triangle_indices;
@@ -121,10 +121,10 @@ int main(int argc, char** argv) {
                     triangle_indices.push_back(static_cast<std::uint32_t>(polygon[corner + 1]));
                 }
             }
-            result = asdiff_mesh::repair_and_decimate(
+            result = aether_mesh::repair_and_decimate(
                 positions,
                 triangle_indices,
-                asdiff_mesh::DecimateOptions{target_face_count, check_self_intersections});
+                aether_mesh::DecimateOptions{target_face_count, check_self_intersections});
         }
 
         Mesh mesh;

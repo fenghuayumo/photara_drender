@@ -12,10 +12,10 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
-#include "asdiff_render/asdiff_render.hpp"
+#include "aether_drender/aether_drender.hpp"
 
 namespace py = pybind11;
-using namespace asdiff_render;
+using namespace aether_drender;
 
 namespace {
 
@@ -607,7 +607,7 @@ private:
 
 } // namespace
 
-PYBIND11_MODULE(_asdiff_render, module) {
+PYBIND11_MODULE(_aether_drender, module) {
     module.doc() = "Portable differentiable rasterization powered by Vulkan";
 
     py::class_<DeviceInfo>(module, "DeviceInfo")
@@ -706,7 +706,7 @@ PYBIND11_MODULE(_asdiff_render, module) {
             options.quality = quality;
             options.parallel_partitions = parallel_partitions;
             options.worker_count = worker_count;
-            return PythonUvAtlasResult(asdiff_render::unwrap_uv(as_span(positions), as_span(indices), options));
+            return PythonUvAtlasResult(aether_drender::unwrap_uv(as_span(positions), as_span(indices), options));
         },
         py::arg("positions"), py::arg("indices"), py::arg("resolution") = std::pair{1024U, 1024U},
         py::arg("gutter") = 1.0F, py::arg("max_stretch") = 1.0F / 6.0F,

@@ -3,9 +3,9 @@
 #include <memory>
 #include <vector>
 
-#include "asdiff_render/types.hpp"
+#include "aether_drender/types.hpp"
 
-namespace asdiff_render {
+namespace aether_drender {
 
 class Context {
 public:
@@ -30,4 +30,4 @@ private:
     friend class TextureRefiner;
 };
 
-} // namespace asdiff_render
+} // namespace aether_drender

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-import asdiff_render
+import aether_drender
 
 
 def main() -> None:
@@ -24,7 +24,7 @@ def main() -> None:
     parser.add_argument("--worker-count", type=int, default=0)
     arguments = parser.parse_args()
 
-    options = asdiff_render.MeshPreparationOptions(
+    options = aether_drender.MeshPreparationOptions(
         quality=arguments.quality,
         target_triangle_count=arguments.target_triangle_count,
         use_instant_remesh=arguments.instant_remesh,
@@ -33,11 +33,11 @@ def main() -> None:
         atlas_parallel_partitions=arguments.parallel_partitions,
         atlas_worker_count=arguments.worker_count,
     )
-    if not asdiff_render.has_mesh_ops_backend():
+    if not aether_drender.has_mesh_ops_backend():
         raise SystemExit(
-            "in-memory mesh ops unavailable; rebuild with ASDIFF_BUILD_MESH_TOOLS=ON and CGAL"
+            "in-memory mesh ops unavailable; rebuild with AETHER_BUILD_MESH_TOOLS=ON and CGAL"
         )
-    result = asdiff_render.prepare_mesh_for_baking(arguments.source_mesh, options=options)
+    result = aether_drender.prepare_mesh_for_baking(arguments.source_mesh, options=options)
     output_path = Path(arguments.output_npz)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     mesh = result.mesh

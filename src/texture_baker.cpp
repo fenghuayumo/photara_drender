@@ -1,4 +1,4 @@
-#include "asdiff_render/texture_baker.hpp"
+#include "aether_drender/texture_baker.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -9,10 +9,10 @@
 #include <utility>
 #include <vector>
 
-#include "asdiff_render/rasterizer.hpp"
+#include "aether_drender/rasterizer.hpp"
 #include "context_internal.hpp"
 
-namespace asdiff_render {
+namespace aether_drender {
 namespace {
 
 constexpr std::uint32_t PROJECTION_BLOCK_SIZE = 64;
@@ -305,4 +305,4 @@ TextureBakeOutput TextureBaker::bake(
     return output;
 }
 
-} // namespace asdiff_render
+} // namespace aether_drender

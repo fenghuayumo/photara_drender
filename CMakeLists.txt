@@ -5,14 +5,14 @@ project(aether_drender VERSION 0.4.0 LANGUAGES CXX)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-option(ASDIFF_BUILD_PYTHON "Build the Python extension" ON)
-option(ASDIFF_BUILD_TESTS "Build native tests" ON)
-option(ASDIFF_ENABLE_VALIDATION "Enable Vulkan validation by default" OFF)
-option(ASDIFF_ENABLE_UVATLAS "Enable Microsoft UVAtlas unwrapping" ON)
-option(ASDIFF_FETCH_UVATLAS "Fetch a pinned UVAtlas source release when it is not installed" ON)
-option(ASDIFF_UVATLAS_USE_OPENMP "Enable UVAtlas internal OpenMP (disable when using parallel partitions)" OFF)
-option(ASDIFF_BUILD_MESH_TOOLS "Build GPL/commercial CGAL mesh preprocessing tools" OFF)
-option(ASDIFF_ENABLE_INSTANT_MESHES "Fetch Instant Meshes and enable C++ remesh_field_aligned" ON)
+option(AETHER_BUILD_PYTHON "Build the Python extension" ON)
+option(AETHER_BUILD_TESTS "Build native tests" ON)
+option(AETHER_ENABLE_VALIDATION "Enable Vulkan validation by default" OFF)
+option(AETHER_ENABLE_UVATLAS "Enable Microsoft UVAtlas unwrapping" ON)
+option(AETHER_FETCH_UVATLAS "Fetch a pinned UVAtlas source release when it is not installed" ON)
+option(AETHER_UVATLAS_USE_OPENMP "Enable UVAtlas internal OpenMP (disable when using parallel partitions)" OFF)
+option(AETHER_BUILD_MESH_TOOLS "Build GPL/commercial CGAL mesh preprocessing tools" OFF)
+option(AETHER_ENABLE_INSTANT_MESHES "Fetch Instant Meshes and enable C++ remesh_field_aligned" ON)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,35 +20,35 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 find_package(Vulkan 1.2 REQUIRED)
-find_program(ASDIFF_DXC_EXECUTABLE
+find_program(AETHER_DXC_EXECUTABLE
     NAMES dxc
     HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin"
     REQUIRED)
 
-set(ASDIFF_HAS_UVATLAS OFF)
-if(ASDIFF_ENABLE_UVATLAS)
+set(AETHER_HAS_UVATLAS OFF)
+if(AETHER_ENABLE_UVATLAS)
     find_package(uvatlas CONFIG QUIET)
     if(TARGET Microsoft::UVAtlas)
-        set(ASDIFF_UVATLAS_TARGET Microsoft::UVAtlas)
-        set(ASDIFF_HAS_UVATLAS ON)
-    elseif(WIN32 AND ASDIFF_FETCH_UVATLAS)
+        set(AETHER_UVATLAS_TARGET Microsoft::UVAtlas)
+        set(AETHER_HAS_UVATLAS ON)
+    elseif(WIN32 AND AETHER_FETCH_UVATLAS)
         include(FetchContent)
         set(BUILD_TOOLS OFF CACHE BOOL "" FORCE)
-        set(UVATLAS_USE_OPENMP ${ASDIFF_UVATLAS_USE_OPENMP} CACHE BOOL "" FORCE)
+        set(UVATLAS_USE_OPENMP ${AETHER_UVATLAS_USE_OPENMP} CACHE BOOL "" FORCE)
         FetchContent_Declare(
             uvatlas
             URL https://codeload.github.com/microsoft/UVAtlas/tar.gz/refs/tags/oct2025
             URL_HASH SHA256=13c2d0d1cbff2924a2aa1e24748ef10c161a6e54ac8eb0e5a3f42b8d54e471af
             DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
         FetchContent_MakeAvailable(uvatlas)
-        set(ASDIFF_UVATLAS_TARGET UVAtlas)
-        set(ASDIFF_HAS_UVATLAS ON)
+        set(AETHER_UVATLAS_TARGET UVAtlas)
+        set(AETHER_HAS_UVATLAS ON)
     else()
         message(WARNING "Microsoft UVAtlas was not found; unwrap_uv() will report that the backend is unavailable")
     endif()
 endif()
 
-set(ASDIFF_SHADER_SOURCES
+set(AETHER_SHADER_SOURCES
     shaders/rasterize_forward.hlsl
     shaders/rasterize_backward.hlsl
     shaders/reduce_vertex_gradients.hlsl
@@ -58,16 +58,16 @@ set(ASDIFF_SHADER_SOURCES
     shaders/texture_forward.hlsl
     shaders/texture_grad_texture.hlsl
     shaders/texture_grad_uv.hlsl)
-list(APPEND ASDIFF_SHADER_SOURCES
+list(APPEND AETHER_SHADER_SOURCES
     shaders/project_texture.hlsl
     shaders/project_ray_visibility.hlsl
     shaders/atlas_photometric_gradient.hlsl
     shaders/atlas_seam_gradient.hlsl
     shaders/atlas_adam_update.hlsl)
 
-set(ASDIFF_SHADER_BINARIES)
-set(ASDIFF_SHADER_EMBEDDED_HEADERS)
-foreach(shader IN LISTS ASDIFF_SHADER_SOURCES)
+set(AETHER_SHADER_BINARIES)
+set(AETHER_SHADER_EMBEDDED_HEADERS)
+foreach(shader IN LISTS AETHER_SHADER_SOURCES)
     get_filename_component(shader_name "${shader}" NAME)
     set(shader_binary "${CMAKE_CURRENT_BINARY_DIR}/shaders/${shader_name}.spv")
     set(shader_profile cs_6_0)
@@ -81,7 +81,7 @@ foreach(shader IN LISTS ASDIFF_SHADER_SOURCES)
     add_custom_command(
         OUTPUT "${shader_binary}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/shaders"
-        COMMAND "${ASDIFF_DXC_EXECUTABLE}"
+        COMMAND "${AETHER_DXC_EXECUTABLE}"
                 -spirv -T ${shader_profile} -E main -O3
                 -fspv-target-env=vulkan1.2
                 -fvk-use-dx-layout
@@ -90,7 +90,7 @@ foreach(shader IN LISTS ASDIFF_SHADER_SOURCES)
                 -Fo "${shader_binary}"
         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${shader}"
         VERBATIM)
-    list(APPEND ASDIFF_SHADER_BINARIES "${shader_binary}")
+    list(APPEND AETHER_SHADER_BINARIES "${shader_binary}")
     string(MAKE_C_IDENTIFIER "${shader_name}_spv" shader_variable)
     set(shader_embedded_header "${CMAKE_CURRENT_BINARY_DIR}/generated/${shader_name}.embedded.hpp")
     add_custom_command(
@@ -103,43 +103,43 @@ foreach(shader IN LISTS ASDIFF_SHADER_SOURCES)
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_spir_v.cmake"
         DEPENDS "${shader_binary}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_spir_v.cmake"
         VERBATIM)
-    list(APPEND ASDIFF_SHADER_EMBEDDED_HEADERS "${shader_embedded_header}")
+    list(APPEND AETHER_SHADER_EMBEDDED_HEADERS "${shader_embedded_header}")
 endforeach()
 
-add_custom_target(asdiff_shaders DEPENDS ${ASDIFF_SHADER_BINARIES} ${ASDIFF_SHADER_EMBEDDED_HEADERS})
+add_custom_target(aether_shaders DEPENDS ${AETHER_SHADER_BINARIES} ${AETHER_SHADER_EMBEDDED_HEADERS})
 
-add_library(asdiff_render
+add_library(aether_drender
     src/context.cpp
     src/rasterizer.cpp
     src/texture_baker.cpp
     src/texture_refiner.cpp
     src/uv_atlas.cpp)
-add_library(asdiff::render ALIAS asdiff_render)
-add_dependencies(asdiff_render asdiff_shaders)
-set_target_properties(asdiff_render PROPERTIES EXPORT_NAME render)
-target_compile_features(asdiff_render PUBLIC cxx_std_20)
+add_library(aether::render ALIAS aether_drender)
+add_dependencies(aether_drender aether_shaders)
+set_target_properties(aether_drender PROPERTIES EXPORT_NAME render)
+target_compile_features(aether_drender PUBLIC cxx_std_20)
 
-target_include_directories(asdiff_render
+target_include_directories(aether_drender
     PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated"
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>)
-target_link_libraries(asdiff_render PUBLIC Vulkan::Vulkan)
-if(ASDIFF_HAS_UVATLAS)
-    target_link_libraries(asdiff_render PRIVATE ${ASDIFF_UVATLAS_TARGET})
+target_link_libraries(aether_drender PUBLIC Vulkan::Vulkan)
+if(AETHER_HAS_UVATLAS)
+    target_link_libraries(aether_drender PRIVATE ${AETHER_UVATLAS_TARGET})
 endif()
-target_compile_definitions(asdiff_render
+target_compile_definitions(aether_drender
     PRIVATE
-        ASDIFF_ENABLE_VALIDATION=$<BOOL:${ASDIFF_ENABLE_VALIDATION}>
-        ASDIFF_HAS_UVATLAS=$<BOOL:${ASDIFF_HAS_UVATLAS}>)
+        AETHER_ENABLE_VALIDATION=$<BOOL:${AETHER_ENABLE_VALIDATION}>
+        AETHER_HAS_UVATLAS=$<BOOL:${AETHER_HAS_UVATLAS}>)
 
 if(MSVC)
-    target_compile_options(asdiff_render PRIVATE /W4 /permissive- /EHsc)
+    target_compile_options(aether_drender PRIVATE /W4 /permissive- /EHsc)
 else()
-    target_compile_options(asdiff_render PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(aether_drender PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-if(ASDIFF_BUILD_PYTHON)
+if(AETHER_BUILD_PYTHON)
     find_package(Python 3.9 REQUIRED COMPONENTS Interpreter Development.Module NumPy)
     execute_process(
         COMMAND "${Python_EXECUTABLE}" -m pybind11 --cmakedir
@@ -147,132 +147,132 @@ if(ASDIFF_BUILD_PYTHON)
         OUTPUT_STRIP_TRAILING_WHITESPACE
         RESULT_VARIABLE pybind11_result)
     if(NOT pybind11_result EQUAL 0)
-        message(FATAL_ERROR "pybind11 is required when ASDIFF_BUILD_PYTHON=ON")
+        message(FATAL_ERROR "pybind11 is required when AETHER_BUILD_PYTHON=ON")
     endif()
     list(APPEND CMAKE_PREFIX_PATH "${pybind11_cmake_dir}")
     find_package(pybind11 CONFIG REQUIRED)
 
-    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python/asdiff_render")
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python/aether_drender")
     configure_file(
-        "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/__init__.py"
-        "${CMAKE_CURRENT_BINARY_DIR}/python/asdiff_render/__init__.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/python/aether_drender/__init__.py"
+        "${CMAKE_CURRENT_BINARY_DIR}/python/aether_drender/__init__.py"
         COPYONLY)
     configure_file(
-        "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/torch.py"
-        "${CMAKE_CURRENT_BINARY_DIR}/python/asdiff_render/torch.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/python/aether_drender/torch.py"
+        "${CMAKE_CURRENT_BINARY_DIR}/python/aether_drender/torch.py"
         COPYONLY)
     configure_file(
-        "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/atlas.py"
-        "${CMAKE_CURRENT_BINARY_DIR}/python/asdiff_render/atlas.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/python/aether_drender/atlas.py"
+        "${CMAKE_CURRENT_BINARY_DIR}/python/aether_drender/atlas.py"
         COPYONLY)
     configure_file(
-        "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/baking.py"
-        "${CMAKE_CURRENT_BINARY_DIR}/python/asdiff_render/baking.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/python/aether_drender/baking.py"
+        "${CMAKE_CURRENT_BINARY_DIR}/python/aether_drender/baking.py"
         COPYONLY)
     configure_file(
-        "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/colmap.py"
-        "${CMAKE_CURRENT_BINARY_DIR}/python/asdiff_render/colmap.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/python/aether_drender/colmap.py"
+        "${CMAKE_CURRENT_BINARY_DIR}/python/aether_drender/colmap.py"
         COPYONLY)
     configure_file(
-        "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/mesh_processing.py"
-        "${CMAKE_CURRENT_BINARY_DIR}/python/asdiff_render/mesh_processing.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/python/aether_drender/mesh_processing.py"
+        "${CMAKE_CURRENT_BINARY_DIR}/python/aether_drender/mesh_processing.py"
         COPYONLY)
 
-    pybind11_add_module(_asdiff_render python/bindings.cpp)
-    target_link_libraries(_asdiff_render PRIVATE asdiff::render Python::NumPy)
-    set_target_properties(_asdiff_render PROPERTIES
-        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python/asdiff_render"
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python/asdiff_render")
+    pybind11_add_module(_aether_drender python/bindings.cpp)
+    target_link_libraries(_aether_drender PRIVATE aether::render Python::NumPy)
+    set_target_properties(_aether_drender PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python/aether_drender"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python/aether_drender")
     foreach(configuration DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
-        set_target_properties(_asdiff_render PROPERTIES
-            LIBRARY_OUTPUT_DIRECTORY_${configuration} "${CMAKE_CURRENT_BINARY_DIR}/python/asdiff_render"
-            RUNTIME_OUTPUT_DIRECTORY_${configuration} "${CMAKE_CURRENT_BINARY_DIR}/python/asdiff_render")
+        set_target_properties(_aether_drender PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY_${configuration} "${CMAKE_CURRENT_BINARY_DIR}/python/aether_drender"
+            RUNTIME_OUTPUT_DIRECTORY_${configuration} "${CMAKE_CURRENT_BINARY_DIR}/python/aether_drender")
     endforeach()
 
-    add_custom_command(TARGET _asdiff_render POST_BUILD
+    add_custom_command(TARGET _aether_drender POST_BUILD
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/__init__.py"
-                "$<TARGET_FILE_DIR:_asdiff_render>/__init__.py"
+                "${CMAKE_CURRENT_SOURCE_DIR}/python/aether_drender/__init__.py"
+                "$<TARGET_FILE_DIR:_aether_drender>/__init__.py"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/torch.py"
-                "$<TARGET_FILE_DIR:_asdiff_render>/torch.py"
+                "${CMAKE_CURRENT_SOURCE_DIR}/python/aether_drender/torch.py"
+                "$<TARGET_FILE_DIR:_aether_drender>/torch.py"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/atlas.py"
-                "$<TARGET_FILE_DIR:_asdiff_render>/atlas.py"
+                "${CMAKE_CURRENT_SOURCE_DIR}/python/aether_drender/atlas.py"
+                "$<TARGET_FILE_DIR:_aether_drender>/atlas.py"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/baking.py"
-                "$<TARGET_FILE_DIR:_asdiff_render>/baking.py"
+                "${CMAKE_CURRENT_SOURCE_DIR}/python/aether_drender/baking.py"
+                "$<TARGET_FILE_DIR:_aether_drender>/baking.py"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/colmap.py"
-                "$<TARGET_FILE_DIR:_asdiff_render>/colmap.py"
+                "${CMAKE_CURRENT_SOURCE_DIR}/python/aether_drender/colmap.py"
+                "$<TARGET_FILE_DIR:_aether_drender>/colmap.py"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${CMAKE_CURRENT_SOURCE_DIR}/python/asdiff_render/mesh_processing.py"
-                "$<TARGET_FILE_DIR:_asdiff_render>/mesh_processing.py"
+                "${CMAKE_CURRENT_SOURCE_DIR}/python/aether_drender/mesh_processing.py"
+                "$<TARGET_FILE_DIR:_aether_drender>/mesh_processing.py"
         COMMAND "${CMAKE_COMMAND}" -E make_directory
-                "$<TARGET_FILE_DIR:_asdiff_render>/shaders")
-    foreach(shader_binary IN LISTS ASDIFF_SHADER_BINARIES)
-        add_custom_command(TARGET _asdiff_render POST_BUILD
+                "$<TARGET_FILE_DIR:_aether_drender>/shaders")
+    foreach(shader_binary IN LISTS AETHER_SHADER_BINARIES)
+        add_custom_command(TARGET _aether_drender POST_BUILD
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                     "${shader_binary}"
-                    "$<TARGET_FILE_DIR:_asdiff_render>/shaders/")
+                    "$<TARGET_FILE_DIR:_aether_drender>/shaders/")
     endforeach()
-    install(TARGETS _asdiff_render LIBRARY DESTINATION asdiff_render RUNTIME DESTINATION asdiff_render)
+    install(TARGETS _aether_drender LIBRARY DESTINATION aether_drender RUNTIME DESTINATION aether_drender)
     install(
         FILES
-            python/asdiff_render/__init__.py
-            python/asdiff_render/torch.py
-            python/asdiff_render/atlas.py
-            python/asdiff_render/baking.py
-            python/asdiff_render/colmap.py
-            python/asdiff_render/mesh_processing.py
-        DESTINATION asdiff_render)
-    install(FILES ${ASDIFF_SHADER_BINARIES} DESTINATION asdiff_render/shaders)
+            python/aether_drender/__init__.py
+            python/aether_drender/torch.py
+            python/aether_drender/atlas.py
+            python/aether_drender/baking.py
+            python/aether_drender/colmap.py
+            python/aether_drender/mesh_processing.py
+        DESTINATION aether_drender)
+    install(FILES ${AETHER_SHADER_BINARIES} DESTINATION aether_drender/shaders)
 endif()
 
-if(ASDIFF_BUILD_TESTS)
+if(AETHER_BUILD_TESTS)
     enable_testing()
-    add_executable(asdiff_native_tests tests/native_tests.cpp)
-    target_link_libraries(asdiff_native_tests PRIVATE asdiff::render)
-    add_test(NAME asdiff_native_tests COMMAND asdiff_native_tests)
-    if(ASDIFF_BUILD_PYTHON)
+    add_executable(aether_native_tests tests/native_tests.cpp)
+    target_link_libraries(aether_native_tests PRIVATE aether::render)
+    add_test(NAME aether_native_tests COMMAND aether_native_tests)
+    if(AETHER_BUILD_PYTHON)
         add_test(
-            NAME asdiff_python_smoke
+            NAME aether_python_smoke
             COMMAND "${CMAKE_COMMAND}" -E env
                     "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/python"
                     "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/python_smoke.py")
     endif()
 endif()
 
-if(ASDIFF_BUILD_MESH_TOOLS)
+if(AETHER_BUILD_MESH_TOOLS)
     add_subdirectory(tools/mesh_preprocessor)
 endif()
 
-install(TARGETS asdiff_render EXPORT asdiff_render_targets)
+install(TARGETS aether_drender EXPORT aether_drender_targets)
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(
     FILES LICENSE THIRD_PARTY_NOTICES.md third_party/UVAtlas.LICENSE
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/asdiff_render)
-install(FILES ${ASDIFF_SHADER_BINARIES} DESTINATION ${CMAKE_INSTALL_DATADIR}/asdiff_render/shaders)
-if(ASDIFF_HAS_UVATLAS)
-    set(ASDIFF_UVATLAS_CONFIG_DEPENDENCY "find_dependency(uvatlas CONFIG)")
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/aether_drender)
+install(FILES ${AETHER_SHADER_BINARIES} DESTINATION ${CMAKE_INSTALL_DATADIR}/aether_drender/shaders)
+if(AETHER_HAS_UVATLAS)
+    set(AETHER_UVATLAS_CONFIG_DEPENDENCY "find_dependency(uvatlas CONFIG)")
 else()
-    set(ASDIFF_UVATLAS_CONFIG_DEPENDENCY "")
+    set(AETHER_UVATLAS_CONFIG_DEPENDENCY "")
 endif()
 configure_package_config_file(
-    cmake/asdiff_renderConfig.cmake.in
-    "${CMAKE_CURRENT_BINARY_DIR}/asdiff_renderConfig.cmake"
-    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/asdiff_render)
+    cmake/aether_drenderConfig.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/aether_drenderConfig.cmake"
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/aether_drender)
 install(
-    EXPORT asdiff_render_targets
-    FILE asdiff_renderTargets.cmake
-    NAMESPACE asdiff::
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/asdiff_render)
+    EXPORT aether_drender_targets
+    FILE aether_drenderTargets.cmake
+    NAMESPACE aether::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/aether_drender)
 write_basic_package_version_file(
-    "${CMAKE_CURRENT_BINARY_DIR}/asdiff_renderConfigVersion.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/aether_drenderConfigVersion.cmake"
     VERSION ${PROJECT_VERSION}
     COMPATIBILITY SameMajorVersion)
 install(
     FILES
-        "${CMAKE_CURRENT_BINARY_DIR}/asdiff_renderConfig.cmake"
-        "${CMAKE_CURRENT_BINARY_DIR}/asdiff_renderConfigVersion.cmake"
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/asdiff_render)
+        "${CMAKE_CURRENT_BINARY_DIR}/aether_drenderConfig.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/aether_drenderConfigVersion.cmake"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/aether_drender)
