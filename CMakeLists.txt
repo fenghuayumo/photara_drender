@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(asdiff_render VERSION 0.4.0 LANGUAGES CXX)
+project(aether_drender VERSION 0.4.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)

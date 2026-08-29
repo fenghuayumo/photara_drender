@@ -1,6 +1,6 @@
-# asdiff_render
+# aether_drender
 
-`asdiff_render` 是使用 C++20、Vulkan 1.2 compute 和 HLSL 从零实现的跨平台可微渲染与纹理烘焙库。
+`aether_drender` 是使用 C++20、Vulkan 1.2 compute 和 HLSL 从零实现的跨平台可微渲染与纹理烘焙库。
 它不依赖 CUDA 或 OpenGL 上下文，提供 C++、NumPy 和 PyTorch 接口。
 
 当前 `0.4.0` 版本包含：
