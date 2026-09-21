@@ -69,7 +69,7 @@ source_view = baked.source_view
 ```
 
 输入照片和输出 atlas 均为 `[height, width, channels]` float32，数组第 0 行对应图像顶部。使用
-`load_colmap_projection()` 时可直接传入 OpenCV/PIL 图像，无需垂直翻转。详细矩阵、viewport 和 AIHoloImager 接入约定见
+`load_colmap_projection()` 时可直接传入 OpenCV/PIL 图像，无需垂直翻转。详细矩阵与 viewport 约定见
 [纹理烘焙指南](docs/texture_baking.md)。
 
 ## 扫描 mesh 完整流水线

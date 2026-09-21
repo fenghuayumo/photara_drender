@@ -35,20 +35,16 @@ image = np.flipud(image_from_opencv).copy()
 mask = np.flipud(mask_from_opencv).copy()
 ```
 
-## AIHoloImager integration
+## Input conventions
 
-The implementation replaces the existing texture reconstruction sequence directly:
-
-- `Mesh::UnwrapUv()` becomes `unwrap_mesh_uv()`; retain `vertex_remap` when rebuilding normals and other attributes.
-- `FlattenVs/FlattenPs` becomes atlas-space Vulkan compute rasterization plus attribute interpolation.
-- `GenShadowMap()` is removed from the default quality path. `TextureBaker` builds BLAS/TLAS and uses inline ray queries;
-  camera shadow rasters are created only for an explicit `shadow_map` request or an allowed unsupported-device fallback.
-- `ProjectTextureCs` becomes `project_texture.hlsl`, with float accumulation, foreground masks, and ray visibility.
-- The projected result becomes the initial parameter for the native C++ `TextureRefiner` instead of being the final texture.
+`TextureBaker` builds BLAS/TLAS and uses inline ray queries; camera shadow rasters are created only for an explicit
+`shadow_map` request or an allowed unsupported-device fallback. A projected bake is an initialization, not the final
+texture: the native C++ `TextureRefiner` refines it in Vulkan before export.
 
 Pass `projection.proj_mtx * projection.view_mtx * model_mtx` as `world_to_clip` when input positions are still in model
-space. If positions are already transformed into world space, omit `model_mtx`. Convert GLM column-major storage to the
-documented row-major NumPy representation instead of copying its raw bytes blindly.
+space. If positions are already transformed into world space, omit `model_mtx`. Callers whose matrices are stored
+column-major must transpose them explicitly into the documented row-major NumPy layout instead of reinterpreting the raw
+bytes.
 
 Recommended masks combine foreground alpha, camera ROI, depth confidence, and manually excluded regions. UVAtlas chart IDs
 can be rasterized into `chart_ids` for the differentiable optimizer so total variation does not blur across chart borders.

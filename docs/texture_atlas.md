@@ -15,9 +15,9 @@ The production COLMAP path uses the native C++ `TextureRefiner`: view rasters, m
 polish all remain in persistent Vulkan buffers. `optimize_texture_atlas()` is the optional PyTorch research adapter for
 experiments that also optimize UV coordinates, camera parameters, exposure, or geometry.
 
-## AIHoloImager integration
+## Textured render example
 
-The existing `DiffOptimizer.Render()` texture branch maps directly to:
+A textured render is a single call:
 
 ```python
 from photara_drender import Rasterizer, render_textured_mesh
@@ -36,7 +36,7 @@ image = result.image
 valid_mask = result.valid_mask
 ```
 
-Important differences from the current wrapper:
+Call conventions:
 
 - Resolution uses `(height, width)` order.
 - Viewport uses lower-left `(x, y, width, height)` coordinates. Convert a top-left ROI before calling if the image loader
@@ -44,9 +44,6 @@ Important differences from the current wrapper:
 - UV coordinates are normalized. Texel centers are `(x + 0.5) / width` and `(y + 0.5) / height`.
 - Atlas content and UV inputs must be contiguous float32 tensors.
 - Alpha, foreground masks, depth consistency, and camera-facing weights should be multiplied into `valid_mask`.
-
-The temporary early return that skips `FitTexture()` can be replaced incrementally: first run level-zero sampling with
-silhouette pixels excluded, then enable mipmapping and antialiasing after those modules are added.
 
 ## Recommended objective
 
