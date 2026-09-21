@@ -3,9 +3,9 @@
 #include <memory>
 #include <vector>
 
-#include "aether_drender/types.hpp"
+#include "photara_drender/types.hpp"
 
-namespace aether_drender {
+namespace photara_drender {
 
 class Context {
 public:
@@ -30,4 +30,4 @@ private:
     friend class TextureRefiner;
 };
 
-} // namespace aether_drender
+} // namespace photara_drender

@@ -9,7 +9,7 @@ import time
 import numpy as np
 from PIL import Image
 
-import aether_drender
+import photara_drender
 from texture_workflow import (
     dense_seam_pairs,
     erode_masks,
@@ -69,14 +69,14 @@ def main() -> None:
 
     mesh = load_mesh(Path(arguments.mesh_npz))
     try:
-        source_images_path = aether_drender.resolve_texture_images_path(
+        source_images_path = photara_drender.resolve_texture_images_path(
             arguments.images_path,
             texture_source=arguments.texture_source,
             delighted_images_path=arguments.delighted_images_path,
         )
     except FileNotFoundError as error:
         raise SystemExit(str(error)) from error
-    projection = aether_drender.load_colmap_projection(
+    projection = photara_drender.load_colmap_projection(
         arguments.sparse_path,
         source_images_path,
         mesh_positions=mesh.positions,
@@ -84,10 +84,10 @@ def main() -> None:
     )
     masks = None
     if arguments.masks_path:
-        masks = aether_drender.load_projection_masks(arguments.masks_path, projection.image_names)
-    baker = aether_drender.TextureBaker(device_index=arguments.device_index)
+        masks = photara_drender.load_projection_masks(arguments.masks_path, projection.image_names)
+    baker = photara_drender.TextureBaker(device_index=arguments.device_index)
     start_time = time.perf_counter()
-    baked = aether_drender.project_texture_atlas(
+    baked = photara_drender.project_texture_atlas(
         mesh,
         projection.images,
         projection.world_to_clip,

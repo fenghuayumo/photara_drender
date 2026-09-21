@@ -1,11 +1,11 @@
-// Optional GPL/commercial CGAL mesh tooling. Not part of the MIT aether_drender library.
+// Optional GPL/commercial CGAL mesh tooling. Not part of the MIT photara_drender library.
 
 #pragma once
 
 #include <cstdint>
 #include <vector>
 
-namespace aether_mesh {
+namespace photara_mesh {
 
 struct TriangleMesh {
     std::vector<float> positions;
@@ -42,4 +42,4 @@ struct RemeshOptions {
     bool deterministic = true;
 };
 
-} // namespace aether_mesh
+} // namespace photara_mesh

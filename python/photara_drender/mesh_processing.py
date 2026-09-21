@@ -12,10 +12,10 @@ import numpy as np
 from .baking import UnwrappedMesh, unwrap_mesh_uv
 
 try:
-    from ._aether_mesh import has_instant_meshes_backend as _has_instant_meshes_backend
-    from ._aether_mesh import prepare_for_baking as _prepare_for_baking_cpp
-    from ._aether_mesh import remesh_field_aligned as _remesh_field_aligned_cpp
-    from ._aether_mesh import repair_and_decimate as _repair_and_decimate_cpp
+    from ._photara_mesh import has_instant_meshes_backend as _has_instant_meshes_backend
+    from ._photara_mesh import prepare_for_baking as _prepare_for_baking_cpp
+    from ._photara_mesh import remesh_field_aligned as _remesh_field_aligned_cpp
+    from ._photara_mesh import repair_and_decimate as _repair_and_decimate_cpp
 except ImportError:
     _has_instant_meshes_backend = None
     _prepare_for_baking_cpp = None
@@ -46,8 +46,8 @@ def remesh_field_aligned(
 
     if _remesh_field_aligned_cpp is None or not has_instant_meshes_backend():
         raise RuntimeError(
-            "Instant Meshes remeshing requires AETHER_BUILD_MESH_TOOLS=ON and "
-            "AETHER_ENABLE_INSTANT_MESHES=ON"
+            "Instant Meshes remeshing requires PHOTARA_BUILD_MESH_TOOLS=ON and "
+            "PHOTARA_ENABLE_INSTANT_MESHES=ON"
         )
     return _remesh_field_aligned_cpp(
         np.ascontiguousarray(positions, dtype=np.float32),
@@ -142,7 +142,7 @@ def repair_and_decimate_mesh(
 
     if _repair_and_decimate_cpp is None:
         raise RuntimeError(
-            "in-memory mesh ops require AETHER_BUILD_MESH_TOOLS=ON and a CGAL-enabled build"
+            "in-memory mesh ops require PHOTARA_BUILD_MESH_TOOLS=ON and a CGAL-enabled build"
         )
     return _repair_and_decimate_cpp(
         np.ascontiguousarray(positions, dtype=np.float32),
@@ -170,13 +170,13 @@ def prepare_mesh_arrays_for_baking(
 
     if options.use_instant_remesh and not has_instant_meshes_backend():
         raise RuntimeError(
-            "Instant Meshes remeshing requires AETHER_BUILD_MESH_TOOLS=ON and "
-            "AETHER_ENABLE_INSTANT_MESHES=ON"
+            "Instant Meshes remeshing requires PHOTARA_BUILD_MESH_TOOLS=ON and "
+            "PHOTARA_ENABLE_INSTANT_MESHES=ON"
         )
 
     if _prepare_for_baking_cpp is None:
         raise RuntimeError(
-            "in-memory mesh ops require AETHER_BUILD_MESH_TOOLS=ON and a CGAL-enabled build"
+            "in-memory mesh ops require PHOTARA_BUILD_MESH_TOOLS=ON and a CGAL-enabled build"
         )
 
     # When Instant Meshes is requested, prefer the dedicated C++ remesh API so
@@ -306,7 +306,7 @@ def prepare_mesh_for_baking(
         try:
             import trimesh
         except ImportError as error:
-            raise ImportError("loading mesh files requires trimesh from aether-drender[baking]") from error
+            raise ImportError("loading mesh files requires trimesh from photara-drender[baking]") from error
         source = trimesh.load(str(source_mesh), force="mesh", process=False)
         if not isinstance(source, trimesh.Trimesh) or source.faces.size == 0:
             raise ValueError("source_mesh must contain a non-empty triangle mesh")

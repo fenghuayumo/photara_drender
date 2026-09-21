@@ -2,7 +2,7 @@ import numpy as np
 from pathlib import Path
 import tempfile
 
-import aether_drender
+import photara_drender
 
 
 def main() -> None:
@@ -12,10 +12,10 @@ def main() -> None:
         delighted = root / "images_delighted"
         raw.mkdir()
         delighted.mkdir()
-        assert aether_drender.resolve_texture_images_path(raw) == delighted
-        assert aether_drender.resolve_texture_images_path(raw, texture_source="rgb") == raw
+        assert photara_drender.resolve_texture_images_path(raw) == delighted
+        assert photara_drender.resolve_texture_images_path(raw, texture_source="rgb") == raw
 
-    rasterizer = aether_drender.Rasterizer()
+    rasterizer = photara_drender.Rasterizer()
     positions = np.array(
         [[-0.75, -0.75, 0.0, 1.0], [0.75, -0.75, 0.0, 1.0], [0.0, 0.75, 0.0, 1.0]],
         dtype=np.float32,
@@ -32,11 +32,11 @@ def main() -> None:
     assert np.isfinite(grad_positions).all()
 
     world_positions = positions[:, :3].copy()
-    unwrapped = aether_drender.unwrap_mesh_uv(world_positions, indices, resolution=(64, 64))
+    unwrapped = photara_drender.unwrap_mesh_uv(world_positions, indices, resolution=(64, 64))
     assert unwrapped.positions.shape[1] == 3 and unwrapped.uv.shape[1] == 2
     assert unwrapped.indices.shape == indices.shape
     assert unwrapped.face_chart_ids.shape == (indices.shape[0],)
-    parallel_unwrapped = aether_drender.unwrap_mesh_uv(
+    parallel_unwrapped = photara_drender.unwrap_mesh_uv(
         world_positions, indices, resolution=(64, 64), parallel_partitions=2
     )
     assert parallel_unwrapped.indices.shape == indices.shape
@@ -44,7 +44,7 @@ def main() -> None:
     assert parallel_unwrapped.face_chart_ids.shape == (indices.shape[0],)
     assert parallel_unwrapped.partition_count >= 1
     assert np.isfinite(parallel_unwrapped.uv).all()
-    assert aether_drender.MESH_QUALITY_TRIANGLE_COUNTS == {
+    assert photara_drender.MESH_QUALITY_TRIANGLE_COUNTS == {
         "high": 1_000_000,
         "medium": 500_000,
         "low": 100_000,
@@ -55,7 +55,7 @@ def main() -> None:
     image[..., 3] = 1.0
     matrix = np.eye(4, dtype=np.float32)[None]
     camera_positions = np.array([[0.0, 0.0, 2.0]], dtype=np.float32)
-    baked = aether_drender.project_texture_atlas(
+    baked = photara_drender.project_texture_atlas(
         unwrapped,
         [image],
         matrix,
@@ -67,7 +67,7 @@ def main() -> None:
     assert baked.valid_mask.any()
     if rasterizer.device_info.supports_ray_query:
         assert baked.used_ray_query
-    native_baker = aether_drender.TextureBaker()
+    native_baker = photara_drender.TextureBaker()
     default_native_bake = native_baker.bake(
         unwrapped.positions,
         unwrapped.normals,
@@ -98,7 +98,7 @@ def main() -> None:
     assert refine_history[-1] < refine_history[0]
     assert seam_history.shape == (0,)
     assert precompute_seconds >= 0.0 and optimization_seconds >= 0.0
-    padded = aether_drender.pad_texture_atlas(baked.color, baked.valid_mask, 2)
+    padded = photara_drender.pad_texture_atlas(baked.color, baked.valid_mask, 2)
     assert padded.shape == baked.color.shape
     assert np.count_nonzero(padded[..., :3]) >= np.count_nonzero(baked.color[..., :3])
 
@@ -142,33 +142,33 @@ def main() -> None:
     assert np.count_nonzero(viewport_raster[:3, ..., 3]) == 0
     assert np.count_nonzero(viewport_raster[15:, ..., 3]) == 0
 
-    if aether_drender.rasterize is not None:
+    if photara_drender.rasterize is not None:
         import torch
 
         torch_positions = torch.tensor(positions, requires_grad=True)
         torch_indices = torch.tensor(indices.astype(np.int64))
-        torch_raster, _ = aether_drender.rasterize(
+        torch_raster, _ = photara_drender.rasterize(
             torch_positions,
             torch_indices,
             (16, 20),
             rasterizer=rasterizer,
         )
         torch_attributes = torch.eye(3, dtype=torch.float32, requires_grad=True)
-        torch_image = aether_drender.interpolate(
+        torch_image = photara_drender.interpolate(
             torch_attributes,
             torch_raster,
             torch_indices,
             rasterizer=rasterizer,
         )
         torch_uv_attributes = torch.tensor(uv_attributes, requires_grad=True)
-        torch_uv = aether_drender.interpolate(
+        torch_uv = photara_drender.interpolate(
             torch_uv_attributes,
             torch_raster,
             torch_indices,
             rasterizer=rasterizer,
         )
         torch_texture = torch.tensor(texture_values, requires_grad=True)
-        torch_sampled = aether_drender.texture(
+        torch_sampled = photara_drender.texture(
             torch_texture,
             torch_uv,
             torch_raster,
@@ -184,7 +184,7 @@ def main() -> None:
         assert torch_texture.grad is not None
         assert torch.isfinite(torch_texture.grad).all()
 
-        high_level_render = aether_drender.render_textured_mesh(
+        high_level_render = photara_drender.render_textured_mesh(
             torch_positions.detach(),
             torch_indices,
             torch_uv_attributes.detach(),
@@ -193,22 +193,22 @@ def main() -> None:
             rasterizer=rasterizer,
         )
         assert high_level_render.image.shape == (16, 20, 3)
-        robust_loss = aether_drender.masked_charbonnier_loss(
+        robust_loss = photara_drender.masked_charbonnier_loss(
             high_level_render.image,
             torch_sampled.detach(),
             high_level_render.valid_mask,
         )
         assert torch.isfinite(robust_loss)
-        assert torch.isfinite(aether_drender.atlas_total_variation(torch_texture.detach()))
+        assert torch.isfinite(photara_drender.atlas_total_variation(torch_texture.detach()))
 
-        options = aether_drender.AtlasOptimizationOptions(
+        options = photara_drender.AtlasOptimizationOptions(
             steps=2,
             learning_rate=1e-2,
             total_variation_weight=0.0,
             seam_weight=0.0,
             cache_view_rasters=True,
         )
-        optimized_texture, history = aether_drender.optimize_texture_atlas(
+        optimized_texture, history = photara_drender.optimize_texture_atlas(
             torch_texture.detach() * 0.9,
             torch_positions.detach()[None],
             torch_indices,

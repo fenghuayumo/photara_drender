@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
-project(aether_drender_consumer LANGUAGES CXX)
+project(photara_drender_consumer LANGUAGES CXX)
 
-find_package(aether_drender 0.1 REQUIRED)
-add_executable(aether_drender_consumer main.cpp)
-target_link_libraries(aether_drender_consumer PRIVATE aether::render)
+find_package(photara_drender 0.1 REQUIRED)
+add_executable(photara_drender_consumer main.cpp)
+target_link_libraries(photara_drender_consumer PRIVATE photara::render)
 

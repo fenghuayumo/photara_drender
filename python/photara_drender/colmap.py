@@ -229,7 +229,7 @@ def load_colmap_projection(
     try:
         from PIL import Image
     except ImportError as error:
-        raise ImportError("Pillow is required to load COLMAP photographs; install aether-drender[baking]") from error
+        raise ImportError("Pillow is required to load COLMAP photographs; install photara-drender[baking]") from error
 
     images_root = Path(images_path)
     photographs = []
@@ -271,7 +271,7 @@ def load_projection_masks(
     try:
         from PIL import Image
     except ImportError as error:
-        raise ImportError("Pillow is required to load projection masks; install aether-drender[baking]") from error
+        raise ImportError("Pillow is required to load projection masks; install photara-drender[baking]") from error
     masks_root = Path(masks_path)
     masks = []
     for name in image_names:

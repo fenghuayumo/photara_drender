@@ -3,7 +3,7 @@ requires = ["scikit-build-core>=0.10", "pybind11>=2.12", "numpy>=1.23"]
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "aether-drender"
+name = "photara-drender"
 version = "0.4.0"
 description = "Cross-platform differentiable rasterization using C++20 and Vulkan"
 readme = "README.md"
@@ -17,7 +17,7 @@ baking = ["Pillow>=10.0", "trimesh>=4.0", "pynanoinstantmeshes>=0.0.3"]
 
 [tool.scikit-build]
 cmake.build-type = "Release"
-wheel.packages = ["python/aether_drender"]
+wheel.packages = ["python/photara_drender"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

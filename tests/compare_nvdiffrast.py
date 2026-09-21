@@ -8,7 +8,7 @@ import sys
 import numpy as np
 import torch
 
-from aether_drender import Rasterizer
+from photara_drender import Rasterizer
 
 
 def main() -> None:

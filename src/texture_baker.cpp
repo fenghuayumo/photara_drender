@@ -1,4 +1,4 @@
-#include "aether_drender/texture_baker.hpp"
+#include "photara_drender/texture_baker.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -9,10 +9,10 @@
 #include <utility>
 #include <vector>
 
-#include "aether_drender/rasterizer.hpp"
+#include "photara_drender/rasterizer.hpp"
 #include "context_internal.hpp"
 
-namespace aether_drender {
+namespace photara_drender {
 namespace {
 
 constexpr std::uint32_t PROJECTION_BLOCK_SIZE = 64;
@@ -305,4 +305,4 @@ TextureBakeOutput TextureBaker::bake(
     return output;
 }
 
-} // namespace aether_drender
+} // namespace photara_drender

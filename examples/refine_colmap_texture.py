@@ -10,17 +10,17 @@ import time
 import numpy as np
 from PIL import Image, ImageFilter
 
-import aether_drender
+import photara_drender
 
 
 def _linear_to_srgb(image: np.ndarray) -> np.ndarray:
     return np.where(image <= 0.0031308, image * 12.92, 1.055 * np.power(image, 1.0 / 2.4) - 0.055)
 
 
-def _load_mesh(path: Path) -> aether_drender.UnwrappedMesh:
+def _load_mesh(path: Path) -> photara_drender.UnwrappedMesh:
     archive = np.load(path)
     charts = archive.get("face_chart_ids", np.zeros(archive["indices"].shape[0], np.uint32))
-    return aether_drender.UnwrappedMesh(
+    return photara_drender.UnwrappedMesh(
         archive["positions"],
         archive["normals"],
         archive["uv"],
@@ -33,7 +33,7 @@ def _load_mesh(path: Path) -> aether_drender.UnwrappedMesh:
     )
 
 
-def _dense_seam_pairs(mesh: aether_drender.UnwrappedMesh, samples_per_edge: int) -> np.ndarray:
+def _dense_seam_pairs(mesh: photara_drender.UnwrappedMesh, samples_per_edge: int) -> np.ndarray:
     faces = mesh.indices
     remap = mesh.vertex_remap
     keys = []
@@ -83,7 +83,7 @@ def _erode_masks(masks: tuple[np.ndarray, ...], radius: int) -> list[np.ndarray]
     return result
 
 
-def _export_model(mesh: aether_drender.UnwrappedMesh, texture: Image.Image, path: Path) -> None:
+def _export_model(mesh: photara_drender.UnwrappedMesh, texture: Image.Image, path: Path) -> None:
     import trimesh
 
     export_uv = mesh.uv.copy()
@@ -106,9 +106,9 @@ def _export_model(mesh: aether_drender.UnwrappedMesh, texture: Image.Image, path
 
 
 def _masked_reprojection_diagnostics(
-    mesh: aether_drender.UnwrappedMesh,
+    mesh: photara_drender.UnwrappedMesh,
     texture_linear: np.ndarray,
-    projection: aether_drender.ColmapProjection,
+    projection: photara_drender.ColmapProjection,
     masks: list[np.ndarray],
     output_dir: Path,
     view_count: int,
@@ -119,7 +119,7 @@ def _masked_reprojection_diagnostics(
     output_dir.mkdir(parents=True, exist_ok=True)
     count = min(max(view_count, 1), len(projection.images))
     selected = np.unique(np.linspace(0, len(projection.images) - 1, count, dtype=np.int64))
-    rasterizer = aether_drender.Rasterizer(device_index=device_index)
+    rasterizer = photara_drender.Rasterizer(device_index=device_index)
     homogeneous = np.concatenate(
         (mesh.positions, np.ones((mesh.positions.shape[0], 1), dtype=np.float32)), axis=1
     )
@@ -217,29 +217,29 @@ def main() -> None:
             f"initial bake uses {baked_source!r}, but refinement requested "
             f"{arguments.texture_source!r}; projection and optimization must use the same views"
         )
-    initial_color = aether_drender.pad_texture_atlas(
+    initial_color = photara_drender.pad_texture_atlas(
         baked_archive["color"], baked_archive["valid_mask"], arguments.padding
     )[..., :3]
     height, width = initial_color.shape[:2]
     try:
-        source_images_path = aether_drender.resolve_texture_images_path(
+        source_images_path = photara_drender.resolve_texture_images_path(
             arguments.images_path,
             texture_source=arguments.texture_source,
             delighted_images_path=arguments.delighted_images_path,
         )
     except FileNotFoundError as error:
         raise SystemExit(str(error)) from error
-    projection = aether_drender.load_colmap_projection(
+    projection = photara_drender.load_colmap_projection(
         arguments.sparse_path,
         source_images_path,
         mesh_positions=mesh.positions,
         image_stride=arguments.image_stride,
     )
-    masks = aether_drender.load_projection_masks(arguments.masks_path, projection.image_names)
+    masks = photara_drender.load_projection_masks(arguments.masks_path, projection.image_names)
     optimization_masks = _erode_masks(masks, arguments.mask_erosion)
     atlas_valid = np.ascontiguousarray(baked_archive["valid_mask"] > 0.5)
     seam_pairs = _dense_seam_pairs(mesh, arguments.seam_samples)
-    baker = aether_drender.TextureBaker(device_index=arguments.device_index)
+    baker = photara_drender.TextureBaker(device_index=arguments.device_index)
     start_time = time.perf_counter()
     optimized, history, seam_history, precompute_seconds, optimization_seconds = baker.refine_texture(
         np.ascontiguousarray(initial_color, dtype=np.float32),

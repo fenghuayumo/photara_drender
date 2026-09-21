@@ -3,10 +3,10 @@
 #include <memory>
 #include <span>
 
-#include "aether_drender/context.hpp"
-#include "aether_drender/types.hpp"
+#include "photara_drender/context.hpp"
+#include "photara_drender/types.hpp"
 
-namespace aether_drender {
+namespace photara_drender {
 
 class TextureRefiner {
 public:
@@ -32,4 +32,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace aether_drender
+} // namespace photara_drender

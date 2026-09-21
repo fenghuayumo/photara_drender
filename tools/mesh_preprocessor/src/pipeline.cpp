@@ -1,15 +1,15 @@
 // This optional library uses CGAL Surface Mesh Simplification, licensed separately under
-// GPL-3.0-or-later or a commercial CGAL license. It is not linked into aether_drender.
+// GPL-3.0-or-later or a commercial CGAL license. It is not linked into photara_drender.
 
-#include "aether_mesh/pipeline.hpp"
+#include "photara_mesh/pipeline.hpp"
 
-#include "aether_mesh/mesh_ops.hpp"
-#include "aether_drender/uv_atlas.hpp"
+#include "photara_mesh/mesh_ops.hpp"
+#include "photara_drender/uv_atlas.hpp"
 
 #include <cmath>
 #include <stdexcept>
 
-namespace aether_mesh {
+namespace photara_mesh {
 
 std::vector<float> compute_vertex_normals(
     std::span<const float> positions,
@@ -71,7 +71,7 @@ PreparedBakeMesh prepare_for_baking(
 
     const auto source_normals =
         compute_vertex_normals(prepared.manifold.positions, prepared.manifold.indices);
-    const auto unwrapped = aether_drender::unwrap_uv(
+    const auto unwrapped = photara_drender::unwrap_uv(
         prepared.manifold.positions, prepared.manifold.indices, options.atlas);
 
     prepared.positions = unwrapped.positions;
@@ -92,25 +92,25 @@ PreparedBakeMesh prepare_for_baking(
     return prepared;
 }
 
-aether_drender::TextureBakeOutput bake_texture_atlas(
-    aether_drender::TextureBaker& baker,
+photara_drender::TextureBakeOutput bake_texture_atlas(
+    photara_drender::TextureBaker& baker,
     const PreparedBakeMesh& mesh,
-    std::span<const aether_drender::ProjectionView> views,
-    const aether_drender::TextureBakeOptions& options) {
+    std::span<const photara_drender::ProjectionView> views,
+    const photara_drender::TextureBakeOptions& options) {
     return baker.bake(mesh.positions, mesh.normals, mesh.uv, mesh.indices, views, options);
 }
 
 BakePipelineResult prepare_and_bake(
-    aether_drender::Context& context,
+    photara_drender::Context& context,
     std::span<const float> positions,
     std::span<const std::uint32_t> triangle_indices,
-    std::span<const aether_drender::ProjectionView> views,
+    std::span<const photara_drender::ProjectionView> views,
     const BakePipelineOptions& options) {
     BakePipelineResult result;
     result.mesh = prepare_for_baking(positions, triangle_indices, options.prepare);
-    aether_drender::TextureBaker baker(context);
+    photara_drender::TextureBaker baker(context);
     result.texture = bake_texture_atlas(baker, result.mesh, views, options.bake);
     return result;
 }
 
-} // namespace aether_mesh
+} // namespace photara_mesh

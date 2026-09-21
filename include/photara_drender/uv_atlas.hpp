@@ -3,9 +3,9 @@
 #include <cstdint>
 #include <span>
 
-#include "aether_drender/types.hpp"
+#include "photara_drender/types.hpp"
 
-namespace aether_drender {
+namespace photara_drender {
 
 [[nodiscard]] bool has_uv_atlas_backend() noexcept;
 
@@ -14,4 +14,4 @@ namespace aether_drender {
     std::span<const std::uint32_t> triangle_indices,
     const UvAtlasOptions& options = {});
 
-} // namespace aether_drender
+} // namespace photara_drender

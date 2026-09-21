@@ -1,4 +1,4 @@
-// Optional GPL/commercial CGAL mesh tooling. Not part of the MIT aether_drender library.
+// Optional GPL/commercial CGAL mesh tooling. Not part of the MIT photara_drender library.
 
 #pragma once
 
@@ -7,17 +7,17 @@
 #include <span>
 #include <vector>
 
-#include "aether_mesh/types.hpp"
-#include "aether_drender/texture_baker.hpp"
-#include "aether_drender/types.hpp"
+#include "photara_mesh/types.hpp"
+#include "photara_drender/texture_baker.hpp"
+#include "photara_drender/types.hpp"
 
-namespace aether_mesh {
+namespace photara_mesh {
 
 struct PrepareOptions {
     DecimateOptions decimate;
     RemeshOptions remesh;
     bool use_instant_remesh = false;
-    aether_drender::UvAtlasOptions atlas;
+    photara_drender::UvAtlasOptions atlas;
 };
 
 struct PreparedBakeMesh {
@@ -36,12 +36,12 @@ struct PreparedBakeMesh {
 
 struct BakePipelineOptions {
     PrepareOptions prepare;
-    aether_drender::TextureBakeOptions bake;
+    photara_drender::TextureBakeOptions bake;
 };
 
 struct BakePipelineResult {
     PreparedBakeMesh mesh;
-    aether_drender::TextureBakeOutput texture;
+    photara_drender::TextureBakeOutput texture;
 };
 
 [[nodiscard]] std::vector<float> compute_vertex_normals(
@@ -53,17 +53,17 @@ struct BakePipelineResult {
     std::span<const std::uint32_t> triangle_indices,
     const PrepareOptions& options = {});
 
-[[nodiscard]] aether_drender::TextureBakeOutput bake_texture_atlas(
-    aether_drender::TextureBaker& baker,
+[[nodiscard]] photara_drender::TextureBakeOutput bake_texture_atlas(
+    photara_drender::TextureBaker& baker,
     const PreparedBakeMesh& mesh,
-    std::span<const aether_drender::ProjectionView> views,
-    const aether_drender::TextureBakeOptions& options = {});
+    std::span<const photara_drender::ProjectionView> views,
+    const photara_drender::TextureBakeOptions& options = {});
 
 [[nodiscard]] BakePipelineResult prepare_and_bake(
-    aether_drender::Context& context,
+    photara_drender::Context& context,
     std::span<const float> positions,
     std::span<const std::uint32_t> triangle_indices,
-    std::span<const aether_drender::ProjectionView> views,
+    std::span<const photara_drender::ProjectionView> views,
     const BakePipelineOptions& options = {});
 
-} // namespace aether_mesh
+} // namespace photara_mesh

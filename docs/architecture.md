@@ -2,12 +2,12 @@
 
 ## Public layers
 
-- `aether_drender::Context` owns the Vulkan instance, selected compute device, queue, command pool, and descriptor pool.
-- `aether_drender::Rasterizer` owns immutable compute pipelines and exposes rasterization and interpolation forward/backward APIs.
-- `aether_drender::TextureBaker` composes atlas rasterization, camera shadow maps, HLSL projection, and optional Vulkan
+- `photara_drender::Context` owns the Vulkan instance, selected compute device, queue, command pool, and descriptor pool.
+- `photara_drender::Rasterizer` owns immutable compute pipelines and exposes rasterization and interpolation forward/backward APIs.
+- `photara_drender::TextureBaker` composes atlas rasterization, camera shadow maps, HLSL projection, and optional Vulkan
   ray-query visibility.
-- `_aether_drender` maps contiguous NumPy arrays to the C++ API with shape and range validation.
-- `aether_drender.torch` composes the native calls into PyTorch autograd functions without linking to a particular PyTorch ABI.
+- `_photara_drender` maps contiguous NumPy arrays to the C++ API with shape and range validation.
+- `photara_drender.torch` composes the native calls into PyTorch autograd functions without linking to a particular PyTorch ABI.
 
 All project-defined functions, variables, files, and namespaces use `snake_case`. Types follow Rust convention and use
 `PascalCase`; constants use `UPPER_SNAKE_CASE`.

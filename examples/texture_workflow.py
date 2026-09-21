@@ -8,17 +8,17 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageFilter
 
-import aether_drender
+import photara_drender
 
 
 def linear_to_srgb(image: np.ndarray) -> np.ndarray:
     return np.where(image <= 0.0031308, image * 12.92, 1.055 * np.power(image, 1.0 / 2.4) - 0.055)
 
 
-def load_mesh(path: Path) -> aether_drender.UnwrappedMesh:
+def load_mesh(path: Path) -> photara_drender.UnwrappedMesh:
     archive = np.load(path)
     charts = archive.get("face_chart_ids", np.zeros(archive["indices"].shape[0], np.uint32))
-    return aether_drender.UnwrappedMesh(
+    return photara_drender.UnwrappedMesh(
         archive["positions"],
         archive["normals"],
         archive["uv"],
@@ -31,7 +31,7 @@ def load_mesh(path: Path) -> aether_drender.UnwrappedMesh:
     )
 
 
-def dense_seam_pairs(mesh: aether_drender.UnwrappedMesh, samples_per_edge: int) -> np.ndarray:
+def dense_seam_pairs(mesh: photara_drender.UnwrappedMesh, samples_per_edge: int) -> np.ndarray:
     faces = mesh.indices
     remap = mesh.vertex_remap
     keys = []
@@ -81,7 +81,7 @@ def erode_masks(masks: tuple[np.ndarray, ...], radius: int) -> list[np.ndarray]:
     return result
 
 
-def export_model(mesh: aether_drender.UnwrappedMesh, texture: Image.Image, path: Path) -> None:
+def export_model(mesh: photara_drender.UnwrappedMesh, texture: Image.Image, path: Path) -> None:
     import trimesh
 
     export_uv = mesh.uv.copy()
@@ -104,9 +104,9 @@ def export_model(mesh: aether_drender.UnwrappedMesh, texture: Image.Image, path:
 
 
 def masked_reprojection_diagnostics(
-    mesh: aether_drender.UnwrappedMesh,
+    mesh: photara_drender.UnwrappedMesh,
     texture_linear: np.ndarray,
-    projection: aether_drender.ColmapProjection,
+    projection: photara_drender.ColmapProjection,
     masks: list[np.ndarray],
     output_dir: Path,
     view_count: int,
@@ -117,7 +117,7 @@ def masked_reprojection_diagnostics(
     output_dir.mkdir(parents=True, exist_ok=True)
     count = min(max(view_count, 1), len(projection.images))
     selected = np.unique(np.linspace(0, len(projection.images) - 1, count, dtype=np.int64))
-    rasterizer = aether_drender.Rasterizer(device_index=device_index)
+    rasterizer = photara_drender.Rasterizer(device_index=device_index)
     homogeneous = np.concatenate(
         (mesh.positions, np.ones((mesh.positions.shape[0], 1), dtype=np.float32)), axis=1
     )

@@ -6,7 +6,7 @@ from typing import NamedTuple, Optional, Sequence, Tuple
 
 import numpy as np
 
-from ._aether_drender import TextureBaker, unwrap_uv
+from ._photara_drender import TextureBaker, unwrap_uv
 
 
 class UnwrappedMesh(NamedTuple):

@@ -1,8 +1,0 @@
-@PACKAGE_INIT@
-
-include(CMakeFindDependencyMacro)
-find_dependency(Vulkan 1.2)
-@AETHER_UVATLAS_CONFIG_DEPENDENCY@
-include("${CMAKE_CURRENT_LIST_DIR}/aether_drenderTargets.cmake")
-
-check_required_components(aether_drender)

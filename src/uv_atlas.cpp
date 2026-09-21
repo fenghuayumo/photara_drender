@@ -1,4 +1,4 @@
-#include "aether_drender/uv_atlas.hpp"
+#include "photara_drender/uv_atlas.hpp"
 
 #include <algorithm>
 #include <array>
@@ -15,14 +15,14 @@
 #include <utility>
 #include <vector>
 
-#if AETHER_HAS_UVATLAS
+#if PHOTARA_HAS_UVATLAS
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <UVAtlas.h>
 #endif
 
-namespace aether_drender {
+namespace photara_drender {
 namespace {
 
 void validate_input(
@@ -49,7 +49,7 @@ void validate_input(
     }
 }
 
-#if AETHER_HAS_UVATLAS
+#if PHOTARA_HAS_UVATLAS
 struct EdgeKey {
     std::uint32_t first;
     std::uint32_t second;
@@ -484,7 +484,7 @@ UvAtlasOutput unwrap_uv_parallel(
 } // namespace
 
 bool has_uv_atlas_backend() noexcept {
-#if AETHER_HAS_UVATLAS
+#if PHOTARA_HAS_UVATLAS
     return true;
 #else
     return false;
@@ -496,9 +496,9 @@ UvAtlasOutput unwrap_uv(
     std::span<const std::uint32_t> triangle_indices,
     const UvAtlasOptions& options) {
     validate_input(positions, triangle_indices, options);
-#if !AETHER_HAS_UVATLAS
+#if !PHOTARA_HAS_UVATLAS
     throw std::runtime_error(
-        "Microsoft UVAtlas support was not built; configure with AETHER_ENABLE_UVATLAS=ON and install uvatlas");
+        "Microsoft UVAtlas support was not built; configure with PHOTARA_ENABLE_UVATLAS=ON and install uvatlas");
 #else
     if (options.parallel_partitions > 1) {
         return unwrap_uv_parallel(positions, triangle_indices, options);
@@ -573,4 +573,4 @@ UvAtlasOutput unwrap_uv(
 #endif
 }
 
-} // namespace aether_drender
+} // namespace photara_drender

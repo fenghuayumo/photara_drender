@@ -1,7 +1,7 @@
 // This optional library uses CGAL Surface Mesh Simplification, licensed separately under
-// GPL-3.0-or-later or a commercial CGAL license. It is not linked into aether_drender.
+// GPL-3.0-or-later or a commercial CGAL license. It is not linked into photara_drender.
 
-#include "aether_mesh/mesh_ops.hpp"
+#include "photara_mesh/mesh_ops.hpp"
 
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/Polygon_mesh_processing/manifoldness.h>
@@ -29,7 +29,7 @@
 namespace PMP = CGAL::Polygon_mesh_processing;
 namespace SMS = CGAL::Surface_mesh_simplification;
 
-namespace aether_mesh {
+namespace photara_mesh {
 namespace {
 
 using Kernel = CGAL::Exact_predicates_inexact_constructions_kernel;
@@ -212,4 +212,4 @@ MeshStatistics inspect_triangle_mesh(
     return statistics;
 }
 
-} // namespace aether_mesh
+} // namespace photara_mesh

@@ -10,8 +10,8 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
-#include "aether_mesh/mesh_ops.hpp"
-#include "aether_mesh/pipeline.hpp"
+#include "photara_mesh/mesh_ops.hpp"
+#include "photara_mesh/pipeline.hpp"
 
 namespace py = pybind11;
 
@@ -52,21 +52,21 @@ void validate_indices(const py::buffer_info& info) {
     }
 }
 
-aether_mesh::DecimateOptions make_decimate_options(std::size_t target_face_count, bool check_self) {
-    aether_mesh::DecimateOptions options;
+photara_mesh::DecimateOptions make_decimate_options(std::size_t target_face_count, bool check_self) {
+    photara_mesh::DecimateOptions options;
     options.target_face_count = target_face_count;
     options.check_self_intersections = check_self;
     return options;
 }
 
-aether_drender::UvAtlasOptions make_atlas_options(
+photara_drender::UvAtlasOptions make_atlas_options(
     const std::pair<std::uint32_t, std::uint32_t>& resolution,
     float gutter,
     float max_stretch,
     const std::optional<bool>& quality,
     std::uint32_t parallel_partitions,
     std::uint32_t worker_count) {
-    aether_drender::UvAtlasOptions options;
+    photara_drender::UvAtlasOptions options;
     options.height = resolution.first;
     options.width = resolution.second;
     options.gutter = gutter;
@@ -79,10 +79,10 @@ aether_drender::UvAtlasOptions make_atlas_options(
 
 } // namespace
 
-PYBIND11_MODULE(_aether_mesh, module) {
+PYBIND11_MODULE(_photara_mesh, module) {
     module.doc() = "Optional in-memory CGAL mesh preparation and baking pipeline (GPL/commercial)";
 
-    module.def("has_instant_meshes_backend", &aether_mesh::has_instant_meshes_backend);
+    module.def("has_instant_meshes_backend", &photara_mesh::has_instant_meshes_backend);
 
     module.def(
         "remesh_field_aligned",
@@ -100,7 +100,7 @@ PYBIND11_MODULE(_aether_mesh, module) {
            bool deterministic) {
             validate_positions(positions.request());
             validate_indices(indices.request());
-            aether_mesh::RemeshOptions options;
+            photara_mesh::RemeshOptions options;
             options.vertex_count = vertex_count;
             options.face_count = face_count;
             options.scale = scale;
@@ -111,7 +111,7 @@ PYBIND11_MODULE(_aether_mesh, module) {
             options.extrinsic = extrinsic;
             options.smooth_iterations = smooth_iterations;
             options.deterministic = deterministic;
-            auto mesh = aether_mesh::remesh_field_aligned(as_span(positions), as_span(indices), options);
+            auto mesh = photara_mesh::remesh_field_aligned(as_span(positions), as_span(indices), options);
             return py::make_tuple(
                 vector_to_array(std::move(mesh.positions),
                                 {static_cast<py::ssize_t>(mesh.positions.size() / 3), 3}),
@@ -139,7 +139,7 @@ PYBIND11_MODULE(_aether_mesh, module) {
            bool check_self_intersections) {
             validate_positions(positions.request());
             validate_indices(indices.request());
-            auto mesh = aether_mesh::repair_and_decimate(
+            auto mesh = photara_mesh::repair_and_decimate(
                 as_span(positions),
                 as_span(indices),
                 make_decimate_options(target_face_count, check_self_intersections));
@@ -168,12 +168,12 @@ PYBIND11_MODULE(_aether_mesh, module) {
            std::uint32_t worker_count) {
             validate_positions(positions.request());
             validate_indices(indices.request());
-            aether_mesh::PrepareOptions options;
+            photara_mesh::PrepareOptions options;
             options.decimate = make_decimate_options(target_face_count, false);
             options.use_instant_remesh = use_instant_remesh;
             options.atlas = make_atlas_options(
                 resolution, gutter, max_stretch, quality, parallel_partitions, worker_count);
-            auto prepared = aether_mesh::prepare_for_baking(as_span(positions), as_span(indices), options);
+            auto prepared = photara_mesh::prepare_for_baking(as_span(positions), as_span(indices), options);
             return py::make_tuple(
                 vector_to_array(std::move(prepared.positions),
                                 {static_cast<py::ssize_t>(prepared.positions.size() / 3), 3}),

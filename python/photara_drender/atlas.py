@@ -7,7 +7,7 @@ from typing import List, NamedTuple, Optional, Sequence, Tuple
 
 import torch
 
-from ._aether_drender import Rasterizer
+from ._photara_drender import Rasterizer
 from .torch import interpolate, rasterize, texture as sample_texture
 
 

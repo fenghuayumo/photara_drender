@@ -1,4 +1,4 @@
-#include "aether_drender/rasterizer.hpp"
+#include "photara_drender/rasterizer.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -10,7 +10,7 @@
 
 #include "context_internal.hpp"
 
-namespace aether_drender {
+namespace photara_drender {
 namespace {
 
 constexpr std::uint32_t FORWARD_BLOCK_WIDTH = 8;
@@ -828,4 +828,4 @@ TextureGradients Rasterizer::texture_backward(
     return result;
 }
 
-} // namespace aether_drender
+} // namespace photara_drender

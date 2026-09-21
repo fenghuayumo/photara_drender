@@ -1,6 +1,6 @@
-"""Python interface for aether_drender."""
+"""Python interface for photara_drender."""
 
-from ._aether_drender import (
+from ._photara_drender import (
     DeviceInfo,
     Rasterizer,
     TextureBaker,

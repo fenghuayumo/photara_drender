@@ -20,7 +20,7 @@ experiments that also optimize UV coordinates, camera parameters, exposure, or g
 The existing `DiffOptimizer.Render()` texture branch maps directly to:
 
 ```python
-from aether_drender import Rasterizer, render_textured_mesh
+from photara_drender import Rasterizer, render_textured_mesh
 
 renderer = Rasterizer(device_index=0)
 result = render_textured_mesh(

@@ -10,9 +10,9 @@
 
 #include <vulkan/vulkan.h>
 
-#include "aether_drender/context.hpp"
+#include "photara_drender/context.hpp"
 
-namespace aether_drender {
+namespace photara_drender {
 
 struct Buffer {
     VkDevice device = VK_NULL_HANDLE;
@@ -139,4 +139,4 @@ public:
     mutable std::mutex dispatch_mutex;
 };
 
-} // namespace aether_drender
+} // namespace photara_drender

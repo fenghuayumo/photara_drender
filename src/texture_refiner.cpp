@@ -1,4 +1,4 @@
-#include "aether_drender/texture_refiner.hpp"
+#include "photara_drender/texture_refiner.hpp"
 
 #include <algorithm>
 #include <array>
@@ -11,10 +11,10 @@
 #include <utility>
 #include <vector>
 
-#include "aether_drender/rasterizer.hpp"
+#include "photara_drender/rasterizer.hpp"
 #include "context_internal.hpp"
 
-namespace aether_drender {
+namespace photara_drender {
 namespace {
 
 constexpr std::uint32_t BLOCK_SIZE = 64;
@@ -447,4 +447,4 @@ TextureRefineOutput TextureRefiner::refine(
     return output;
 }
 
-} // namespace aether_drender
+} // namespace photara_drender

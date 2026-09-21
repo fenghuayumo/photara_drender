@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace aether_drender {
+namespace photara_drender {
 
 enum class CullMode : std::uint32_t {
     none = 0,
@@ -185,4 +185,4 @@ struct TextureRefineOutput {
     double optimization_seconds = 0.0;
 };
 
-} // namespace aether_drender
+} // namespace photara_drender
