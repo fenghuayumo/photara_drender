@@ -35,6 +35,10 @@ def main() -> None:
         help="Intrinsic-delighted views; defaults to <images_path>_delighted",
     )
     parser.add_argument("--masks-path")
+    parser.add_argument(
+        "--color-space", choices=("srgb", "linear"), default="srgb",
+        help="blend and refine in sRGB (default, matches photographs) or scene-linear",
+    )
     parser.add_argument("--resolution", type=int, default=2048)
     parser.add_argument("--image-stride", type=int, default=1)
     parser.add_argument("--device-index", type=int, default=0)
@@ -81,6 +85,7 @@ def main() -> None:
         source_images_path,
         mesh_positions=mesh.positions,
         image_stride=arguments.image_stride,
+        linearize_srgb=arguments.color_space == "linear",
     )
     masks = None
     if arguments.masks_path:
@@ -112,6 +117,7 @@ def main() -> None:
             mask_applied=np.asarray(masks is not None),
             visibility_mode=np.asarray("ray_query"),
             used_ray_query=np.asarray(baked.used_ray_query),
+            color_space=np.asarray(arguments.color_space),
         )
 
     history = np.empty(0, dtype=np.float32)
@@ -145,8 +151,10 @@ def main() -> None:
             (optimized, (baked.valid_mask > 0.5)[..., None].astype(np.float32)), axis=2
         )
 
-    linear_rgb = np.clip(final_color[..., :3], 0.0, 1.0)
-    srgb = np.clip(linear_to_srgb(linear_rgb), 0.0, 1.0)
+    display = np.clip(final_color[..., :3], 0.0, 1.0)
+    if arguments.color_space == "linear":
+        display = np.clip(linear_to_srgb(display), 0.0, 1.0)
+    srgb = display
     output_path = Path(arguments.output_png)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     texture_image = Image.fromarray((srgb * 255.0 + 0.5).astype(np.uint8), "RGB")
@@ -162,6 +170,7 @@ def main() -> None:
         mask_applied=np.asarray(masks is not None),
         visibility_mode=np.asarray("ray_query"),
         used_ray_query=np.asarray(baked.used_ray_query),
+        color_space=np.asarray(arguments.color_space),
         optimized=np.asarray(not arguments.no_optimize),
         history=np.asarray(history, dtype=np.float32),
         seam_history=np.asarray(seam_history, dtype=np.float32),
@@ -186,6 +195,7 @@ def main() -> None:
             diagnostics_dir,
             arguments.diagnostic_view_count,
             arguments.device_index,
+            arguments.color_space,
         )
     elapsed_seconds = time.perf_counter() - start_time
     print(

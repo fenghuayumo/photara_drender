@@ -124,6 +124,8 @@ struct ProjectionView {
     std::uint32_t width = 0;
     std::uint32_t height = 0;
     std::uint32_t channel_count = 0;
+    // Float RGB/RGBA in the caller's color space, values in [0, 1]. Projection
+    // and refinement blend these values directly and do not convert sRGB.
     std::vector<float> image;
     std::vector<float> visibility_mask;
     std::array<float, 16> world_to_clip{};

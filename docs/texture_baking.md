@@ -23,7 +23,7 @@ individual contributing view.
 - `world_to_clip`: row-major float32 `[view_count, 4, 4]`, evaluated as `clip = matrix * [position, 1]`.
 - Clip-space `x/y/z` are divided by positive `w`; Vulkan-style depth matrices using `z` in `[0, 1]` are recommended.
 - Images, masks, viewports, and atlas UV use a lower-left origin.
-- Images contain linear RGB or RGBA float32 data. Convert sRGB photographs to linear space before confidence blending.
+- Images are float RGB or RGBA in the caller's color space, usually display-referred sRGB so the bake matches the photographs. The baker does not convert between sRGB and linear. Pass scene-linear values only when the whole projection and refinement should stay linear, and encode sRGB yourself on export.
 - `viewport` is lower-left `(x, y, width, height)`. A full image uses `(0, 0, image_width, image_height)`.
 - `camera_position` is world-space and controls both normal-facing confidence and ray direction.
 

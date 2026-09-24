@@ -162,6 +162,7 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         return;
     }
 
+    // Photographs are already in the caller's blend space (sRGB or linear).
     const float3 color = float3(sample_photo(pixel_position, 0), sample_photo(pixel_position, 1), sample_photo(pixel_position, 2));
     const float alpha = channel_count == 4 ? sample_photo(pixel_position, 3) : 1.0f;
     const float confidence = visibility * alpha * view_cosine * push_constants.camera_position_weight.w;

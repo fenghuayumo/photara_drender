@@ -66,7 +66,7 @@ partitioning is faster on large meshes but may introduce additional island bound
 
 COLMAP support currently accepts undistorted `PINHOLE` and `SIMPLE_PINHOLE` text models. Other camera models must first
 be undistorted by COLMAP. `load_colmap_projection()` converts COLMAP world-to-camera poses into row-major clip matrices,
-computes camera centers, derives near/far ranges from the mesh, and optionally linearizes sRGB photographs before blend.
+computes camera centers, derives near/far ranges from the mesh, and leaves photographs in sRGB unless `linearize_srgb=True`.
 
 CGAL Surface Mesh Simplification is GPL-3.0-or-later/commercial. The CGAL executable is an optional, separate target and
 is not linked into the MIT renderer library. This separation also leaves a clean replacement boundary for another

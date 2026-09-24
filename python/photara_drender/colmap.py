@@ -199,9 +199,13 @@ def load_colmap_projection(
     max_images: Optional[int] = None,
     near: Optional[float] = None,
     far: Optional[float] = None,
-    linearize_srgb: bool = True,
+    linearize_srgb: bool = False,
 ) -> ColmapProjection:
-    """Load calibrated photographs and construct this renderer's row-major clip matrices."""
+    """Load calibrated photographs and construct this renderer's row-major clip matrices.
+
+    Photographs stay in display-referred sRGB unless ``linearize_srgb`` is set.
+    The baker blends the returned floats as given.
+    """
 
     if image_stride < 1:
         raise ValueError("image_stride must be positive")

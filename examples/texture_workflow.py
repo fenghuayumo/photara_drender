@@ -111,6 +111,7 @@ def masked_reprojection_diagnostics(
     output_dir: Path,
     view_count: int,
     device_index: int,
+    color_space: str = "srgb",
 ) -> None:
     """Save foreground-cropped target/render/error panels and masked metrics."""
 
@@ -144,8 +145,14 @@ def masked_reprojection_diagnostics(
         y0, y1 = max(0, int(ys.min()) - margin), min(height, int(ys.max()) + margin + 1)
         x0, x1 = max(0, int(xs.min()) - margin), min(width, int(xs.max()) + margin + 1)
 
-        target_vis = np.clip(linear_to_srgb(np.clip(target, 0.0, 1.0)), 0.0, 1.0)
-        render_vis = np.clip(linear_to_srgb(np.clip(rendered, 0.0, 1.0)), 0.0, 1.0)
+        def display(image: np.ndarray) -> np.ndarray:
+            clipped = np.clip(image, 0.0, 1.0)
+            if color_space == "linear":
+                clipped = np.clip(linear_to_srgb(clipped), 0.0, 1.0)
+            return clipped
+
+        target_vis = display(target)
+        render_vis = display(rendered)
         target_vis[~valid] = 0.0
         render_vis[~valid] = 0.0
         error = np.zeros_like(target_vis)

@@ -113,6 +113,7 @@ def _masked_reprojection_diagnostics(
     output_dir: Path,
     view_count: int,
     device_index: int,
+    color_space: str = "srgb",
 ) -> None:
     """Save foreground-cropped target/render/error panels and masked metrics."""
 
@@ -146,8 +147,14 @@ def _masked_reprojection_diagnostics(
         y0, y1 = max(0, int(ys.min()) - margin), min(height, int(ys.max()) + margin + 1)
         x0, x1 = max(0, int(xs.min()) - margin), min(width, int(xs.max()) + margin + 1)
 
-        target_vis = np.clip(_linear_to_srgb(np.clip(target, 0.0, 1.0)), 0.0, 1.0)
-        render_vis = np.clip(_linear_to_srgb(np.clip(rendered, 0.0, 1.0)), 0.0, 1.0)
+        def display(image: np.ndarray) -> np.ndarray:
+            clipped = np.clip(image, 0.0, 1.0)
+            if color_space == "linear":
+                clipped = np.clip(_linear_to_srgb(clipped), 0.0, 1.0)
+            return clipped
+
+        target_vis = display(target)
+        render_vis = display(rendered)
         target_vis[~valid] = 0.0
         render_vis[~valid] = 0.0
         error = np.zeros_like(target_vis)
@@ -202,6 +209,10 @@ def main() -> None:
     parser.add_argument("--seam-samples", type=int, default=4)
     parser.add_argument("--seam-polish-steps", type=int, default=30)
     parser.add_argument("--seam-polish-learning-rate", type=float, default=0.001)
+    parser.add_argument(
+        "--color-space", choices=("srgb", "linear"),
+        help="must match the bake; omitted archives are treated as linear",
+    )
     parser.add_argument("--image-stride", type=int, default=1)
     parser.add_argument("--device-index", type=int, default=0)
     parser.add_argument("--diagnostics-dir")
@@ -216,6 +227,15 @@ def main() -> None:
         raise SystemExit(
             f"initial bake uses {baked_source!r}, but refinement requested "
             f"{arguments.texture_source!r}; projection and optimization must use the same views"
+        )
+    archived_space = (
+        str(baked_archive["color_space"]) if "color_space" in baked_archive else "linear"
+    )
+    color_space = arguments.color_space or archived_space
+    if color_space != archived_space:
+        raise SystemExit(
+            f"initial bake uses {archived_space!r}, but refinement requested "
+            f"{color_space!r}; projection and optimization must use the same color space"
         )
     initial_color = photara_drender.pad_texture_atlas(
         baked_archive["color"], baked_archive["valid_mask"], arguments.padding
@@ -234,6 +254,7 @@ def main() -> None:
         source_images_path,
         mesh_positions=mesh.positions,
         image_stride=arguments.image_stride,
+        linearize_srgb=color_space == "linear",
     )
     masks = photara_drender.load_projection_masks(arguments.masks_path, projection.image_names)
     optimization_masks = _erode_masks(masks, arguments.mask_erosion)
@@ -266,7 +287,10 @@ def main() -> None:
     # so padding again here would overwrite the seam solution.
     output_path = Path(arguments.output_png)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    srgb = np.clip(_linear_to_srgb(np.clip(optimized_rgba[..., :3], 0.0, 1.0)), 0.0, 1.0)
+    display = np.clip(optimized_rgba[..., :3], 0.0, 1.0)
+    if color_space == "linear":
+        display = np.clip(_linear_to_srgb(display), 0.0, 1.0)
+    srgb = display
     texture = Image.fromarray((srgb * 255.0 + 0.5).astype(np.uint8), "RGB")
     texture.save(output_path)
     np.savez_compressed(
@@ -276,6 +300,7 @@ def main() -> None:
         history=np.asarray(history, dtype=np.float32),
         seam_history=np.asarray(seam_history, dtype=np.float32),
         seam_pairs=seam_pairs,
+        color_space=np.asarray(color_space),
         texture_source=np.asarray(arguments.texture_source),
         source_images_path=np.asarray(str(source_images_path.resolve())),
         mask_applied=np.asarray(True),
@@ -296,6 +321,7 @@ def main() -> None:
             diagnostics_dir,
             arguments.diagnostic_view_count,
             arguments.device_index,
+            color_space,
         )
     print(
         f"views={len(projection.images)} source={arguments.texture_source} "
