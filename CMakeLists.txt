@@ -112,6 +112,7 @@ add_library(photara_drender
     src/context.cpp
     src/rasterizer.cpp
     src/texture_baker.cpp
+    src/texture_padding.cpp
     src/texture_refiner.cpp
     src/uv_atlas.cpp)
 add_library(photara::render ALIAS photara_drender)

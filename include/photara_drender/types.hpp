@@ -90,6 +90,12 @@ struct TextureGradients {
 enum class ProjectionBlendMode : std::uint32_t {
     best_view = 0,
     weighted_average = 1,
+    // Pixel-footprint softmax blend. Each view contributes
+    // exp(scale * |n.v| / d^2) instead of a linear weight, so the
+    // highest-resolution view dominates each texel and grazing or distant
+    // samples cannot blur or alias the result. `scale` is
+    // TextureBakeOptions::softmax_scale multiplied by ProjectionView::weight.
+    softmax = 2,
 };
 
 enum class VisibilityMode : std::uint32_t {
@@ -131,6 +137,9 @@ struct ProjectionView {
     std::array<float, 16> world_to_clip{};
     std::array<float, 3> camera_position{};
     std::optional<Viewport> viewport;
+    // Per-view multiplier. Used by every blend mode, but with different
+    // meaning: best_view/weighted_average scale the linear confidence, while
+    // softmax scales the exponential footprint weight (blend sharpness).
     float weight = 1.0F;
     float depth_bias = 1e-3F;
     float min_view_cosine = 0.05F;
@@ -147,6 +156,19 @@ struct TextureBakeOptions {
     std::uint32_t pcf_radius = 1;
     float ray_origin_bias = 1e-4F;
     bool allow_visibility_fallback = true;
+    // Object masks hide the capture volume behind a foreground subject, so a
+    // masked pixel is not necessarily an unobserved one. A floor above zero
+    // keeps masked pixels as low-confidence samples instead of hard vetoes:
+    // geometry that is visible in the photographs but outside every mask (the
+    // surface a scanned object rests on, for example) then still receives its
+    // real texture, while masked-in pixels keep dominating wherever they exist.
+    // 0 keeps strict mask semantics.
+    float mask_floor = 0.0F;
+    // Exponential weight of ProjectionBlendMode::softmax. Values <= 0 select an
+    // automatic scene-relative scale (see suggest_softmax_scale). The exponent
+    // applied per sample is softmax_scale * ProjectionView::weight *
+    // |n.v| / d^2, clamped to 64 to keep exp() finite.
+    float softmax_scale = 0.0F;
 };
 
 struct TextureBakeOutput {
@@ -155,7 +177,15 @@ struct TextureBakeOutput {
     std::vector<float> color;
     std::vector<float> confidence;
     std::vector<std::uint32_t> source_view;
+    // Texels that received at least one projection sample. Unchanged by
+    // pad_texture_atlas(): guard texels are recorded in filled_mask instead.
     std::vector<float> valid_mask;
+    // Rasterized chart coverage (1 = the atlas rasterizer wrote the texel).
+    // Empty for outputs produced before the coverage report was added.
+    std::vector<float> coverage_mask;
+    // Texels whose color was extrapolated by pad_texture_atlas(). Empty when
+    // padding has not run.
+    std::vector<float> filled_mask;
     bool used_ray_query = false;
 };
 

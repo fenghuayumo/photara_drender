@@ -142,7 +142,9 @@ public:
         const std::string& blend_mode,
         const std::string& visibility_mode,
         std::uint32_t pcf_radius,
-        bool allow_visibility_fallback) {
+        bool allow_visibility_fallback,
+        float softmax_scale,
+        float mask_floor) {
         const auto position_info = positions.request();
         if (position_info.ndim != 2 || position_info.shape[1] != 3 || position_info.shape[0] <= 0) {
             throw std::invalid_argument("positions must have shape [vertex_count, 3]");
@@ -219,9 +221,14 @@ public:
             options.blend_mode = ProjectionBlendMode::best_view;
         } else if (blend_mode == "weighted_average") {
             options.blend_mode = ProjectionBlendMode::weighted_average;
+        } else if (blend_mode == "softmax") {
+            options.blend_mode = ProjectionBlendMode::softmax;
         } else {
-            throw std::invalid_argument("blend_mode must be 'best_view' or 'weighted_average'");
+            throw std::invalid_argument(
+                "blend_mode must be 'best_view', 'weighted_average', or 'softmax'");
         }
+        options.softmax_scale = softmax_scale;
+        options.mask_floor = mask_floor;
         if (visibility_mode == "shadow_map") {
             options.visibility_mode = VisibilityMode::shadow_map;
         } else if (visibility_mode == "hybrid_ray_query") {
@@ -242,8 +249,11 @@ public:
             std::move(output.source_view), {static_cast<py::ssize_t>(output.height), static_cast<py::ssize_t>(output.width)});
         auto valid_mask = vector_to_array(
             std::move(output.valid_mask), {static_cast<py::ssize_t>(output.height), static_cast<py::ssize_t>(output.width)});
+        auto coverage_mask = vector_to_array(
+            std::move(output.coverage_mask), {static_cast<py::ssize_t>(output.height), static_cast<py::ssize_t>(output.width)});
         return py::make_tuple(
-            std::move(color), std::move(confidence), std::move(source_view), std::move(valid_mask), output.used_ray_query);
+            std::move(color), std::move(confidence), std::move(source_view), std::move(valid_mask),
+            std::move(coverage_mask), output.used_ray_query);
     }
 
     py::tuple refine_texture(
@@ -724,7 +734,8 @@ PYBIND11_MODULE(_photara_drender, module) {
             py::arg("visibility_masks") = py::none(), py::arg("viewports") = py::none(),
             py::arg("resolution") = std::pair{1024U, 1024U},
             py::arg("blend_mode") = "weighted_average", py::arg("visibility_mode") = "ray_query",
-            py::arg("pcf_radius") = 1, py::arg("allow_visibility_fallback") = true)
+            py::arg("pcf_radius") = 1, py::arg("allow_visibility_fallback") = true,
+            py::arg("softmax_scale") = 0.0F, py::arg("mask_floor") = 0.0F)
         .def(
             "refine_texture",
             &PythonTextureBaker::refine_texture,
@@ -738,4 +749,56 @@ PYBIND11_MODULE(_photara_drender, module) {
             py::arg("seam_polish_steps") = 30, py::arg("seam_learning_rate") = 1e-3F);
 
     module.def("enumerate_devices", &Context::enumerate_devices);
+
+    module.def(
+        "pad_texture_atlas",
+        [](const py::array_t<float, py::array::c_style | py::array::forcecast>& color,
+           const py::array_t<float, py::array::c_style | py::array::forcecast>& valid_mask,
+           std::uint32_t margin,
+           const py::object& coverage_mask,
+           bool fill_unobserved,
+           std::uint32_t maximum_fill_distance) {
+            const auto color_info = color.request();
+            const auto valid_info = valid_mask.request();
+            if (color_info.ndim != 3 || color_info.shape[0] <= 0 || color_info.shape[1] <= 0 ||
+                (color_info.shape[2] != 3 && color_info.shape[2] != 4)) {
+                throw std::invalid_argument("color must have shape [height, width, 3 or 4]");
+            }
+            if (valid_info.ndim != 2 || valid_info.shape[0] != color_info.shape[0] ||
+                valid_info.shape[1] != color_info.shape[1]) {
+                throw std::invalid_argument("valid_mask must match the color dimensions");
+            }
+            TextureBakeOutput output;
+            output.width = static_cast<std::uint32_t>(color_info.shape[1]);
+            output.height = static_cast<std::uint32_t>(color_info.shape[0]);
+            output.color.assign(color.data(), color.data() + color.size());
+            output.valid_mask.assign(valid_mask.data(), valid_mask.data() + valid_mask.size());
+            if (!coverage_mask.is_none()) {
+                const auto coverage = py::cast<py::array_t<float, py::array::c_style | py::array::forcecast>>(
+                    coverage_mask);
+                const auto coverage_info = coverage.request();
+                if (coverage_info.ndim != 2 || coverage_info.shape[0] != color_info.shape[0] ||
+                    coverage_info.shape[1] != color_info.shape[1]) {
+                    throw std::invalid_argument("coverage_mask must match the color dimensions");
+                }
+                output.coverage_mask.assign(coverage.data(), coverage.data() + coverage.size());
+            }
+            TexturePaddingOptions options;
+            options.margin = margin;
+            options.fill_unobserved = fill_unobserved;
+            options.maximum_fill_distance = maximum_fill_distance;
+            const auto stats = pad_texture_atlas(output, options);
+            const std::vector<py::ssize_t> color_shape{
+                color_info.shape[0], color_info.shape[1], color_info.shape[2]};
+            const std::vector<py::ssize_t> mask_shape{color_info.shape[0], color_info.shape[1]};
+            return py::make_tuple(
+                vector_to_array(std::move(output.color), color_shape),
+                vector_to_array(std::move(output.filled_mask), mask_shape),
+                stats.gutter_texels,
+                stats.unobserved_texels,
+                stats.remaining_unobserved);
+        },
+        py::arg("color"), py::arg("valid_mask"), py::arg("margin") = 4,
+        py::arg("coverage_mask") = py::none(), py::arg("fill_unobserved") = true,
+        py::arg("maximum_fill_distance") = 0);
 }

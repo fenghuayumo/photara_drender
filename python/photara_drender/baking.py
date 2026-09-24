@@ -6,7 +6,7 @@ from typing import NamedTuple, Optional, Sequence, Tuple
 
 import numpy as np
 
-from ._photara_drender import TextureBaker, unwrap_uv
+from ._photara_drender import TextureBaker, pad_texture_atlas as _pad_texture_atlas, unwrap_uv
 
 
 class UnwrappedMesh(NamedTuple):
@@ -26,6 +26,7 @@ class BakedTexture(NamedTuple):
     confidence: np.ndarray
     source_view: np.ndarray
     valid_mask: np.ndarray
+    coverage_mask: np.ndarray
     used_ray_query: bool
 
 
@@ -33,11 +34,21 @@ def pad_texture_atlas(
     color: np.ndarray,
     valid_mask: np.ndarray,
     padding: int,
+    *,
+    coverage_mask: Optional[np.ndarray] = None,
+    fill_unobserved: bool = False,
+    maximum_fill_distance: int = 0,
 ) -> np.ndarray:
     """Extend valid atlas texels into empty neighbors to prevent filtered seam cracks.
 
     The returned color is a copy. ``valid_mask`` keeps its projection-valid
     meaning and is therefore not modified by guard texels.
+
+    ``padding`` is the guard width in texels. With ``fill_unobserved`` the colour
+    of rasterized chart texels that never received a sample (masked out, rejected
+    by the facing test, or occluded everywhere) is extrapolated from the nearest
+    valid texel instead of staying black; ``coverage_mask`` marks those texels
+    and can be omitted when only the guard band is wanted.
     """
 
     color = np.asarray(color, dtype=np.float32)
@@ -48,42 +59,26 @@ def pad_texture_atlas(
         raise ValueError("valid_mask must match the color dimensions")
     if padding < 0:
         raise ValueError("padding must be non-negative")
-    result = np.ascontiguousarray(color.copy())
-    if padding == 0 or not valid.any():
-        return result
-
-    filled = valid.copy()
-    height, width = filled.shape
-    offsets = (
-        (-1, -1), (-1, 0), (-1, 1),
-        (0, -1), (0, 1),
-        (1, -1), (1, 0), (1, 1),
+    if padding == 0 and not fill_unobserved:
+        return np.ascontiguousarray(color.copy())
+    if not valid.any():
+        return np.ascontiguousarray(color.copy())
+    coverage = None
+    if coverage_mask is not None:
+        coverage = np.ascontiguousarray(np.asarray(coverage_mask, dtype=np.float32))
+        if coverage.shape != valid.shape:
+            raise ValueError("coverage_mask must match the color dimensions")
+    if maximum_fill_distance < 0:
+        raise ValueError("maximum_fill_distance must be non-negative")
+    padded, _filled, _gutter, _unobserved, _remaining = _pad_texture_atlas(
+        np.ascontiguousarray(color),
+        valid.astype(np.float32),
+        int(padding),
+        coverage,
+        bool(fill_unobserved),
+        int(maximum_fill_distance),
     )
-    for _ in range(padding):
-        accumulated = np.zeros_like(result)
-        sample_count = np.zeros((height, width), dtype=np.uint8)
-        for dy, dx in offsets:
-            destination_y = slice(max(0, dy), min(height, height + dy))
-            destination_x = slice(max(0, dx), min(width, width + dx))
-            source_y = slice(max(0, -dy), min(height, height - dy))
-            source_x = slice(max(0, -dx), min(width, width - dx))
-            destination_valid = filled[destination_y, destination_x]
-            source_valid = filled[source_y, source_x]
-            candidates = ~destination_valid & source_valid
-            if not candidates.any():
-                continue
-            accumulated_view = accumulated[destination_y, destination_x]
-            source_view = result[source_y, source_x]
-            accumulated_view[candidates] += source_view[candidates]
-            sample_count[destination_y, destination_x][candidates] += 1
-        frontier = ~filled & (sample_count > 0)
-        if not frontier.any():
-            break
-        result[frontier] = accumulated[frontier] / sample_count[frontier, None]
-        if result.shape[2] == 4:
-            result[frontier, 3] = 1.0
-        filled[frontier] = True
-    return result
+    return padded
 
 
 def _compute_vertex_normals(positions: np.ndarray, indices: np.ndarray) -> np.ndarray:
@@ -159,9 +154,24 @@ def project_texture_atlas(
     visibility_mode: str = "ray_query",
     pcf_radius: int = 1,
     allow_visibility_fallback: bool = True,
+    softmax_scale: float = 0.0,
+    mask_floor: float = 0.0,
     padding: int = 0,
+    fill_unobserved: bool = False,
+    maximum_fill_distance: int = 0,
 ) -> BakedTexture:
-    """Project photographs into atlas space with authoritative ray-query visibility by default."""
+    """Project photographs into atlas space with authoritative ray-query visibility by default.
+
+    ``blend_mode="softmax"`` weights every sample by its pixel footprint on the
+    surface (``|n.v| / d^2``) and blends with a scene-relative exponential
+    softmax, so the best-resolving view dominates instead of a linear average
+    that mixes in grazing and distant samples. ``mask_floor`` keeps masked-out
+    pixels as weak samples so geometry that the masks hide but the photographs
+    show still receives texture. ``padding`` extends valid texels into the chart
+    gutter by that many texels, and ``fill_unobserved`` gives rasterized texels
+    that received no sample at all the colour of the nearest valid texel instead
+    of leaving them black (flat per-chart fills; opt in deliberately).
+    """
 
     if baker is None:
         baker = TextureBaker(device_index=device_index)
@@ -187,8 +197,19 @@ def project_texture_atlas(
         visibility_mode=visibility_mode,
         pcf_radius=pcf_radius,
         allow_visibility_fallback=allow_visibility_fallback,
+        softmax_scale=float(softmax_scale),
+        mask_floor=float(mask_floor),
     )
     baked = BakedTexture(*output)
-    if padding:
-        baked = baked._replace(color=pad_texture_atlas(baked.color, baked.valid_mask, padding))
+    if padding or fill_unobserved:
+        baked = baked._replace(
+            color=pad_texture_atlas(
+                baked.color,
+                baked.valid_mask,
+                padding,
+                coverage_mask=baked.coverage_mask,
+                fill_unobserved=fill_unobserved,
+                maximum_fill_distance=maximum_fill_distance,
+            )
+        )
     return baked

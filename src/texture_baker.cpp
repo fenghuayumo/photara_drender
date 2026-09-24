@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "photara_drender/rasterizer.hpp"
+#include "photara_drender/texture_padding.hpp"
 #include "context_internal.hpp"
 
 namespace photara_drender {
@@ -164,7 +165,9 @@ TextureBakeOutput TextureBaker::bake(
         throw std::invalid_argument("at least one projection view is required");
     }
     if (options.width == 0 || options.height == 0 || options.pcf_radius > 4 ||
-        !std::isfinite(options.ray_origin_bias) || options.ray_origin_bias <= 0.0F) {
+        !std::isfinite(options.ray_origin_bias) || options.ray_origin_bias <= 0.0F ||
+        !std::isfinite(options.mask_floor) || options.mask_floor < 0.0F ||
+        options.mask_floor > 1.0F) {
         throw std::invalid_argument("atlas dimensions are invalid or pcf_radius exceeds 4");
     }
     const bool ray_visibility_requested = options.visibility_mode != VisibilityMode::shadow_map;
@@ -187,6 +190,33 @@ TextureBakeOutput TextureBaker::bake(
     const auto atlas_normals = impl_->rasterizer_.interpolate_forward(
         normals, 3, triangle_indices, atlas_raster);
     const auto atlas_pixel_count = static_cast<std::size_t>(options.width) * options.height;
+    // Chart coverage: the atlas rasterizer stores the covered triangle index in
+    // the fourth component, so uncovered texels are exactly the zero entries.
+    std::vector<float> coverage_mask(atlas_pixel_count, 0.0F);
+    if (atlas_raster.raster.size() == atlas_pixel_count * 4) {
+        for (std::size_t pixel = 0; pixel < atlas_pixel_count; ++pixel) {
+            coverage_mask[pixel] = std::round(atlas_raster.raster[pixel * 4 + 3]) != 0.0F ? 1.0F : 0.0F;
+        }
+    }
+
+    // Softmax blending weights every sample by its pixel footprint on the
+    // surface; the exponential scale is scene-relative so it does not depend on
+    // the capture units. Callers can override it per scene or per view.
+    float softmax_scale = options.softmax_scale;
+    if (options.blend_mode == ProjectionBlendMode::softmax) {
+        if (!(softmax_scale > 0.0F) || !std::isfinite(softmax_scale)) {
+            std::vector<float> camera_positions(views.size() * 3);
+            for (std::size_t index = 0; index < views.size(); ++index) {
+                std::copy_n(views[index].camera_position.begin(), 3, camera_positions.begin() + index * 3);
+            }
+            softmax_scale = suggest_softmax_scale(positions, camera_positions);
+            if (!(softmax_scale > 0.0F) || !std::isfinite(softmax_scale)) {
+                // Degenerate capture rig; fall back to a mild, unit-scale
+                // sharpness instead of failing the bake.
+                softmax_scale = 1.0F;
+            }
+        }
+    }
 
     auto atlas_position_buffer = impl_->context_.create_buffer(atlas_positions.values.size() * sizeof(float), 0);
     auto atlas_normal_buffer = impl_->context_.create_buffer(atlas_normals.values.size() * sizeof(float), 0);
@@ -242,9 +272,20 @@ TextureBakeOutput TextureBaker::bake(
             shadow_raster_data = std::move(shadow_raster.raster);
         }
         std::vector<float> default_mask{1.0F};
-        const std::span<const float> mask = view.visibility_mask.empty()
+        std::vector<float> floored_mask;
+        std::span<const float> mask = view.visibility_mask.empty()
             ? std::span<const float>(default_mask)
             : std::span<const float>(view.visibility_mask);
+        if (options.mask_floor > 0.0F && !view.visibility_mask.empty()) {
+            // Object masks hide the volume behind a subject; keep masked pixels
+            // as weak samples so visible-but-masked geometry still gets texture
+            // instead of staying black.
+            floored_mask.resize(view.visibility_mask.size());
+            for (std::size_t index = 0; index < floored_mask.size(); ++index) {
+                floored_mask[index] = std::max(view.visibility_mask[index], options.mask_floor);
+            }
+            mask = std::span<const float>(floored_mask);
+        }
         auto shadow_buffer = impl_->context_.create_buffer(shadow_raster_data.size() * sizeof(float), 0);
         auto photo_buffer = impl_->context_.create_buffer(view.image.size() * sizeof(float), 0);
         auto mask_buffer = impl_->context_.create_buffer(mask.size() * sizeof(float), 0);
@@ -255,8 +296,13 @@ TextureBakeOutput TextureBaker::bake(
         const auto viewport = resolve_viewport(view);
         ProjectionPushConstants push_constants{};
         push_constants.world_to_clip = view.world_to_clip;
+        // Softmax mode reuses the per-view weight as a sharpness multiplier;
+        // the other modes keep using it to scale the linear confidence.
+        const float view_weight = options.blend_mode == ProjectionBlendMode::softmax
+            ? view.weight * softmax_scale
+            : view.weight;
         push_constants.camera_position_weight = {
-            view.camera_position[0], view.camera_position[1], view.camera_position[2], view.weight};
+            view.camera_position[0], view.camera_position[1], view.camera_position[2], view_weight};
         push_constants.viewport = {viewport.x, viewport.y, viewport.width, viewport.height};
         push_constants.dimensions = {options.width, options.height, view.width, view.height};
         const std::uint32_t packed = view.channel_count |
@@ -288,6 +334,7 @@ TextureBakeOutput TextureBaker::bake(
     output.confidence.resize(atlas_pixel_count);
     output.source_view.resize(atlas_pixel_count);
     output.valid_mask.resize(atlas_pixel_count);
+    output.coverage_mask = std::move(coverage_mask);
     std::vector<float> accumulated_color(atlas_pixel_count * 3);
     accumulated_color_buffer.download(accumulated_color.data(), accumulated_color.size() * sizeof(float));
     accumulated_weight_buffer.download(output.confidence.data(), output.confidence.size() * sizeof(float));
@@ -295,7 +342,10 @@ TextureBakeOutput TextureBaker::bake(
     for (std::size_t pixel = 0; pixel < atlas_pixel_count; ++pixel) {
         const float weight = output.confidence[pixel];
         output.valid_mask[pixel] = weight > 0.0F ? 1.0F : 0.0F;
-        const float divisor = options.blend_mode == ProjectionBlendMode::weighted_average && weight > 0.0F ? weight : 1.0F;
+        // best_view stores the winning sample directly; both averaging modes
+        // accumulate color * weight and normalize by the accumulated weight.
+        const float divisor =
+            options.blend_mode != ProjectionBlendMode::best_view && weight > 0.0F ? weight : 1.0F;
         output.color[pixel * 4 + 0] = accumulated_color[pixel * 3 + 0] / divisor;
         output.color[pixel * 4 + 1] = accumulated_color[pixel * 3 + 1] / divisor;
         output.color[pixel * 4 + 2] = accumulated_color[pixel * 3 + 2] / divisor;

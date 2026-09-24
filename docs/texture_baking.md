@@ -17,6 +17,19 @@ The baking pipeline has four stages:
 usually a better initialization for subsequent differentiable optimization. `source_view` always records the strongest
 individual contributing view.
 
+`softmax` is the recommended quality mode. Every sample is weighted by its pixel footprint on the surface,
+`|n.v| / d^2` (the inverse of how much world space one image pixel covers there), and views are combined with a
+scene-relative exponential softmax (`softmax_scale`, automatically `20 * min squared vertex-to-camera distance` unless the
+caller overrides it). The view that resolves a texel best therefore dominates instead of being averaged with grazing,
+distant, or lower-resolution samples, which removes ghosting and grazing-angle aliasing from the atlas. The per-view
+`weight` multiplies the exponential sharpness in this mode. The accumulation is a numerically stable online softmax, so
+the linear-average host normalization still applies.
+
+Object masks are a rendering aid, not a statement that a pixel is unobserved: a mask hides the capture volume behind
+the subject. `mask_floor` (> 0) therefore keeps masked pixels as weak samples instead of hard vetoes, so the surface an
+object rests on keeps its real texture while masked-in pixels still dominate wherever they exist. Use `mask_floor = 0`
+for strict mask semantics, and `1` to ignore masks during the bake.
+
 ## Coordinate contract
 
 - `positions`: world-space float32 `[vertex_count, 3]`.
@@ -69,6 +82,13 @@ source so an albedo initialization can never be optimized against lit RGB photog
 Projection-valid texels do not cover the empty gutter around every UV chart. Use `padding=8` in
 `project_texture_atlas()` (or `pad_texture_atlas()` on an existing bake) before filtered rendering or model export. The
 projection-valid mask remains unchanged, while RGB and alpha guard texels are extended into the gutter.
+
+`pad_texture_atlas()` is implemented natively (`photara_drender::pad_texture_atlas`) with a Danielsson 8SSEDT nearest
+source field, so it also fills rasterized chart texels that never received a sample: masked-out regions, texels rejected
+by the minimum facing cosine, and surfaces occluded in every view. Those texels copy the nearest valid texel instead of
+staying black, which matters for object scans whose masks hide the surrounding capture volume. Filled texels are reported
+in `filled_mask` (never in `valid_mask`), so downstream tools can still distinguish measured from extrapolated texels.
+Set `fill_unobserved=false` for a conservative guard-band-only fill.
 
 `examples/bake_colmap.py` keeps the initial ray-query projection in memory, runs 1000 native refinement steps by default,
 and exports the PNG/GLB only after seam polish. Use `--no-optimize` to explicitly export an unrefined bake, or

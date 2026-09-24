@@ -100,6 +100,20 @@ float shadow_visibility(float2 pixel_position, float projected_depth, uint pcf_r
     return sample_count > 0.0f ? visible / sample_count : 0.0f;
 }
 
+// Blend modes packed into settings.z; keep in sync with
+// photara_drender::ProjectionBlendMode.
+static const uint BLEND_BEST_VIEW = 0u;
+static const uint BLEND_WEIGHTED_AVERAGE = 1u;
+// Pixel-footprint softmax: the sample weight is
+// exp(scale * |n.v| / d^2), so the view that resolves the texel best dominates
+// and grazing or distant views cannot blur or alias the atlas. The accumulated
+// buffers hold a numerically stable online softmax: accumulated_color is the
+// running sum of color * exp(s - max), accumulated_weight the matching sum of
+// exp(s - max), and best_confidence the running maximum s. The host divides by
+// accumulated_weight, exactly like the linear average.
+static const uint BLEND_SOFTMAX = 2u;
+static const float SOFTMAX_MAXIMUM_EXPONENT = 64.0f;
+
 [numthreads(64, 1, 1)]
 void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
 {
@@ -165,18 +179,55 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     // Photographs are already in the caller's blend space (sRGB or linear).
     const float3 color = float3(sample_photo(pixel_position, 0), sample_photo(pixel_position, 1), sample_photo(pixel_position, 2));
     const float alpha = channel_count == 4 ? sample_photo(pixel_position, 3) : 1.0f;
+    const uint view_index = asuint(push_constants.settings.w);
+    if (blend_mode == BLEND_SOFTMAX)
+    {
+        const float3 camera_vector = push_constants.camera_position_weight.xyz - position;
+        const float distance_to_camera = max(length(camera_vector), 1e-6f);
+        // Inverse pixel footprint of this sample on the surface: a texel served
+        // by a close, front-facing view carries far more detail than the same
+        // texel seen far away or at a grazing angle.
+        const float footprint = view_cosine / (distance_to_camera * distance_to_camera);
+        const float exponent =
+            clamp(visibility * alpha * footprint * push_constants.camera_position_weight.w, 0.0f, SOFTMAX_MAXIMUM_EXPONENT);
+        const float previous_max = best_confidence[pixel_index];
+        const float current_max = max(previous_max, exponent);
+        if (current_max > previous_max)
+        {
+            // Rescale the existing accumulation into the new exponent frame.
+            const float rescale = exp(previous_max - current_max);
+            accumulated_color[pixel_index * 3 + 0] *= rescale;
+            accumulated_color[pixel_index * 3 + 1] *= rescale;
+            accumulated_color[pixel_index * 3 + 2] *= rescale;
+            accumulated_weight[pixel_index] *= rescale;
+            best_confidence[pixel_index] = current_max;
+        }
+        if (exponent >= previous_max)
+        {
+            source_view[pixel_index] = view_index;
+        }
+        const float sample_weight = exp(exponent - current_max);
+        if (sample_weight <= 0.0f)
+        {
+            return;
+        }
+        accumulated_color[pixel_index * 3 + 0] += color.x * sample_weight;
+        accumulated_color[pixel_index * 3 + 1] += color.y * sample_weight;
+        accumulated_color[pixel_index * 3 + 2] += color.z * sample_weight;
+        accumulated_weight[pixel_index] += sample_weight;
+        return;
+    }
     const float confidence = visibility * alpha * view_cosine * push_constants.camera_position_weight.w;
     if (confidence <= 0.0f)
     {
         return;
     }
-    const uint view_index = asuint(push_constants.settings.w);
     if (confidence > best_confidence[pixel_index])
     {
         best_confidence[pixel_index] = confidence;
         source_view[pixel_index] = view_index;
     }
-    if (blend_mode == 0)
+    if (blend_mode == BLEND_BEST_VIEW)
     {
         if (confidence >= accumulated_weight[pixel_index])
         {

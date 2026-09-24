@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -15,6 +16,12 @@ void require(bool condition, const char* message) {
     }
 }
 
+constexpr std::uint32_t k_padding_test_size = 24;
+
+std::size_t padding_test_index(std::uint32_t x, std::uint32_t y) {
+    return static_cast<std::size_t>(y) * k_padding_test_size + x;
+}
+
 float sum_channel(const photara_drender::RasterizeOutput& output, std::uint32_t channel) {
     float sum = 0.0F;
     for (std::size_t i = channel; i < output.raster.size(); i += 4) {
@@ -23,10 +30,98 @@ float sum_channel(const photara_drender::RasterizeOutput& output, std::uint32_t 
     return sum;
 }
 
+// Atlas padding runs on the CPU, so it is validated before any Vulkan work.
+void test_texture_padding() {
+    constexpr std::uint32_t size = k_padding_test_size;
+    const auto index_of = [](std::uint32_t x, std::uint32_t y) { return padding_test_index(x, y); };
+    const std::array<float, 4> source_color{0.25F, 0.5F, 0.75F, 1.0F};
+
+    photara_drender::TextureBakeOutput output;
+    output.width = size;
+    output.height = size;
+    output.color.assign(static_cast<std::size_t>(size) * size * 4, 0.0F);
+    output.valid_mask.assign(static_cast<std::size_t>(size) * size, 0.0F);
+    output.coverage_mask.assign(static_cast<std::size_t>(size) * size, 0.0F);
+    // A 4x4 block of projected texels ...
+    for (std::uint32_t y = 2; y < 6; ++y) {
+        for (std::uint32_t x = 2; x < 6; ++x) {
+            const std::size_t pixel = index_of(x, y);
+            output.valid_mask[pixel] = 1.0F;
+            output.coverage_mask[pixel] = 1.0F;
+            std::copy(source_color.begin(), source_color.end(), output.color.begin() + pixel * 4);
+        }
+    }
+    // ... and a rasterized chart that never received a sample (masked out,
+    // grazing, or occluded in every view).
+    for (std::uint32_t y = 10; y < 18; ++y) {
+        for (std::uint32_t x = 10; x < 18; ++x) {
+            output.coverage_mask[index_of(x, y)] = 1.0F;
+        }
+    }
+
+    photara_drender::TexturePaddingOptions options;
+    options.margin = 3;
+    options.fill_unobserved = true;
+    const auto stats = photara_drender::pad_texture_atlas(output, options);
+    require(stats.valid_texels == 16, "Padding counted the wrong number of valid texels");
+    require(stats.filled_texels == stats.gutter_texels + stats.unobserved_texels,
+            "Padding statistics are inconsistent");
+    require(stats.gutter_texels > 0, "Padding did not fill any gutter texel");
+    require(stats.unobserved_texels == 64, "Padding did not fill the unobserved chart texels");
+    require(stats.remaining_unobserved == 0, "Padding left chart texels unfilled");
+
+    const auto matches_source = [&](std::uint32_t x, std::uint32_t y) {
+        const auto* pixel = output.color.data() + index_of(x, y) * 4;
+        return std::abs(pixel[0] - source_color[0]) < 1e-6F &&
+               std::abs(pixel[1] - source_color[1]) < 1e-6F &&
+               std::abs(pixel[2] - source_color[2]) < 1e-6F && pixel[3] == 1.0F;
+    };
+    require(matches_source(2, 6), "Gutter texel inside the margin was not extended");
+    require(matches_source(10, 10), "Unobserved chart texel was not filled from the nearest valid texel");
+    require(output.filled_mask[index_of(10, 10)] > 0.5F, "Filled texel was not recorded in filled_mask");
+    require(output.filled_mask[index_of(2, 2)] < 0.5F, "Valid texels must not be marked as filled");
+    require(output.valid_mask[index_of(10, 10)] < 0.5F,
+            "Padding must not widen the projection-valid mask");
+    require(output.color[index_of(2, 12) * 4 + 0] == 0.0F,
+            "Padding wrote outside the guard band and the chart coverage");
+
+    photara_drender::TextureBakeOutput untouched;
+    untouched.width = size;
+    untouched.height = size;
+    untouched.color.assign(static_cast<std::size_t>(size) * size * 4, 0.0F);
+    untouched.valid_mask.assign(static_cast<std::size_t>(size) * size, 0.0F);
+    untouched.coverage_mask.assign(static_cast<std::size_t>(size) * size, 0.0F);
+    for (std::uint32_t y = 2; y < 6; ++y) {
+        for (std::uint32_t x = 2; x < 6; ++x) {
+            const std::size_t pixel = index_of(x, y);
+            untouched.valid_mask[pixel] = 1.0F;
+            untouched.coverage_mask[pixel] = 1.0F;
+        }
+    }
+    for (std::uint32_t y = 10; y < 18; ++y) {
+        for (std::uint32_t x = 10; x < 18; ++x) {
+            untouched.coverage_mask[index_of(x, y)] = 1.0F;
+        }
+    }
+    photara_drender::TexturePaddingOptions disabled;
+    disabled.margin = 0;
+    disabled.fill_unobserved = false;
+    const auto disabled_stats = photara_drender::pad_texture_atlas(untouched, disabled);
+    require(disabled_stats.filled_texels == 0, "Disabled padding must not fill any texel");
+    require(disabled_stats.remaining_unobserved == 64,
+            "Disabled padding must report the chart texels it left untouched");
+
+    const std::vector<float> vertices{0.0F, 0.0F, 0.0F};
+    const std::vector<float> cameras{0.0F, 0.0F, 2.0F};
+    const float scale = photara_drender::suggest_softmax_scale(vertices, cameras);
+    require(std::abs(scale - 80.0F) < 1e-3F, "Softmax scale heuristic returned an unexpected value");
+}
+
 } // namespace
 
 int main() {
     try {
+        test_texture_padding();
         photara_drender::Context context;
         photara_drender::Rasterizer rasterizer(context);
         const std::vector<float> positions{
@@ -271,6 +366,68 @@ int main() {
             require(std::ranges::any_of(ray_baked.valid_mask, [](float value) { return value > 0.5F; }),
                     "Ray-query texture projection rejected every visible texel");
         }
+
+        // Pixel-footprint softmax: the near view must dominate the atlas instead
+        // of being averaged with a distant, lower-resolution view.
+        photara_drender::ProjectionView far_view = projection_view;
+        far_view.camera_position = {0.0F, 0.0F, 6.0F};
+        for (std::size_t pixel = 0; pixel < 16 * 16; ++pixel) {
+            far_view.image[pixel * 4 + 0] = 0.1F;
+            far_view.image[pixel * 4 + 1] = 0.2F;
+            far_view.image[pixel * 4 + 2] = 0.8F;
+        }
+        const std::array<photara_drender::ProjectionView, 2> two_views{projection_view, far_view};
+        const std::span<const photara_drender::ProjectionView> two_view_span(two_views.data(), two_views.size());
+        auto average_options = bake_options;
+        average_options.blend_mode = photara_drender::ProjectionBlendMode::weighted_average;
+        average_options.softmax_scale = 0.0F;
+        const auto averaged =
+            texture_baker.bake(world_positions, world_normals, bake_uv, indices, two_view_span, average_options);
+        auto softmax_options = bake_options;
+        softmax_options.blend_mode = photara_drender::ProjectionBlendMode::softmax;
+        softmax_options.softmax_scale = 0.0F;
+        const auto softmax_baked =
+            texture_baker.bake(world_positions, world_normals, bake_uv, indices, two_view_span, softmax_options);
+        require(softmax_baked.valid_mask.size() == softmax_baked.coverage_mask.size(),
+                "Coverage mask was not reported with the same shape as the valid mask");
+        const auto softmax_valid = std::ranges::find_if(
+            softmax_baked.valid_mask, [](float value) { return value > 0.5F; });
+        require(softmax_valid != softmax_baked.valid_mask.end(), "Softmax blending produced no valid texel");
+        const auto softmax_index = static_cast<std::size_t>(softmax_valid - softmax_baked.valid_mask.begin());
+        require(softmax_baked.coverage_mask[softmax_index] > 0.5F,
+                "Rasterized texels must be reported as covered");
+        require(softmax_baked.color[softmax_index * 4 + 0] > averaged.color[softmax_index * 4 + 0] + 0.05F,
+                "Softmax blending did not favour the near view over the linear average");
+        require(std::abs(softmax_baked.color[softmax_index * 4 + 0] - 0.8F) < 0.05F,
+                "Softmax blending is not dominated by the best-resolving view");
+
+        // Mask floor: object masks hide the volume behind a subject, so a
+        // masked-out but visible surface must keep its texture as a weak sample
+        // instead of being vetoed outright.
+        photara_drender::ProjectionView masked_view = projection_view;
+        masked_view.visibility_mask.assign(16 * 16, 0.0F);
+        const auto masked_span =
+            std::span<const photara_drender::ProjectionView>(&masked_view, 1);
+        auto strict_mask_options = bake_options;
+        strict_mask_options.blend_mode = photara_drender::ProjectionBlendMode::softmax;
+        strict_mask_options.mask_floor = 0.0F;
+        const auto strict_masked_baked =
+            texture_baker.bake(world_positions, world_normals, bake_uv, indices, masked_span, strict_mask_options);
+        require(std::ranges::none_of(
+                    strict_masked_baked.valid_mask, [](float value) { return value > 0.0F; }),
+                "A strict mask must reject every masked pixel");
+        auto floored_mask_options = strict_mask_options;
+        floored_mask_options.mask_floor = 0.1F;
+        const auto floored_masked_baked =
+            texture_baker.bake(world_positions, world_normals, bake_uv, indices, masked_span, floored_mask_options);
+        const auto floored_valid = std::ranges::find_if(
+            floored_masked_baked.valid_mask, [](float value) { return value > 0.5F; });
+        require(floored_valid != floored_masked_baked.valid_mask.end(),
+                "A mask floor must keep masked pixels as weak samples");
+        const auto floored_index =
+            static_cast<std::size_t>(floored_valid - floored_masked_baked.valid_mask.begin());
+        require(std::abs(floored_masked_baked.color[floored_index * 4 + 0] - 0.8F) < 1e-3F,
+                "Mask-floor samples must carry the photograph colour");
 
         std::cout << "device=" << context.device_info().name << '\n';
         std::cout << "finite_difference=" << numerical_gradient
