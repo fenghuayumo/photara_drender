@@ -721,7 +721,10 @@ PYBIND11_MODULE(_photara_drender, module) {
         py::arg("positions"), py::arg("indices"), py::arg("resolution") = std::pair{1024U, 1024U},
         py::arg("gutter") = 1.0F, py::arg("max_stretch") = 1.0F / 6.0F,
         py::arg("max_chart_count") = 0, py::arg("quality") = py::none(),
-        py::arg("parallel_partitions") = 1, py::arg("worker_count") = 0);
+        py::arg("parallel_partitions") = 0, py::arg("worker_count") = 0,
+        "Unwrap a mesh into a UV atlas. parallel_partitions=0 picks the partition count "
+        "automatically (several PCA partitions for large meshes, one UVAtlasCreate call for "
+        "small ones); 1 forces a single chart set and N>1 forces N partitions.");
 
     py::class_<PythonTextureBaker>(module, "TextureBaker")
         .def(py::init<std::uint32_t, bool>(), py::arg("device_index") = 0, py::arg("enable_validation") = false)

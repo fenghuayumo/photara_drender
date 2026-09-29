@@ -23,7 +23,12 @@ def main() -> None:
     quality_group = parser.add_mutually_exclusive_group()
     quality_group.add_argument("--fast", action="store_true", help="Force fast geodesic partitioning")
     quality_group.add_argument("--quality", action="store_true", help="Force quality geodesic partitioning")
-    parser.add_argument("--parallel-partitions", type=int, default=1)
+    parser.add_argument(
+        "--parallel-partitions",
+        type=int,
+        default=0,
+        help="0 (default) selects automatically, 1 forces a single UVAtlasCreate call, N>1 forces N PCA partitions",
+    )
     parser.add_argument("--worker-count", type=int, default=0)
     parser.add_argument("--output-npz", help="Optionally save the unwrapped mesh for texture baking")
     arguments = parser.parse_args()

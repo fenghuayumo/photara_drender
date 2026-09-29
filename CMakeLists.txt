@@ -11,6 +11,7 @@ option(PHOTARA_ENABLE_VALIDATION "Enable Vulkan validation by default" OFF)
 option(PHOTARA_ENABLE_UVATLAS "Enable Microsoft UVAtlas unwrapping" ON)
 option(PHOTARA_FETCH_UVATLAS "Fetch a pinned UVAtlas source release when it is not installed" ON)
 option(PHOTARA_UVATLAS_USE_OPENMP "Enable UVAtlas internal OpenMP (disable when using parallel partitions)" OFF)
+option(PHOTARA_USE_VENDORED_UVATLAS "Build the local third_party/UVAtlas checkout instead of an installed or fetched release (for benchmarking local UVAtlas patches)" OFF)
 option(PHOTARA_BUILD_MESH_TOOLS "Build GPL/commercial CGAL mesh preprocessing tools" OFF)
 option(PHOTARA_ENABLE_INSTANT_MESHES "Fetch Instant Meshes and enable C++ remesh_field_aligned" ON)
 
@@ -27,24 +28,34 @@ find_program(PHOTARA_DXC_EXECUTABLE
 
 set(PHOTARA_HAS_UVATLAS OFF)
 if(PHOTARA_ENABLE_UVATLAS)
-    find_package(uvatlas CONFIG QUIET)
-    if(TARGET Microsoft::UVAtlas)
-        set(PHOTARA_UVATLAS_TARGET Microsoft::UVAtlas)
-        set(PHOTARA_HAS_UVATLAS ON)
-    elseif(WIN32 AND PHOTARA_FETCH_UVATLAS)
-        include(FetchContent)
+    set(PHOTARA_VENDORED_UVATLAS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/UVAtlas")
+    if(PHOTARA_USE_VENDORED_UVATLAS AND EXISTS "${PHOTARA_VENDORED_UVATLAS_DIR}/CMakeLists.txt")
         set(BUILD_TOOLS OFF CACHE BOOL "" FORCE)
         set(UVATLAS_USE_OPENMP ${PHOTARA_UVATLAS_USE_OPENMP} CACHE BOOL "" FORCE)
-        FetchContent_Declare(
-            uvatlas
-            URL https://codeload.github.com/microsoft/UVAtlas/tar.gz/refs/tags/oct2025
-            URL_HASH SHA256=13c2d0d1cbff2924a2aa1e24748ef10c161a6e54ac8eb0e5a3f42b8d54e471af
-            DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-        FetchContent_MakeAvailable(uvatlas)
+        add_subdirectory("${PHOTARA_VENDORED_UVATLAS_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/uvatlas")
         set(PHOTARA_UVATLAS_TARGET UVAtlas)
         set(PHOTARA_HAS_UVATLAS ON)
+        message(STATUS "photara_drender: unwrapping with the vendored UVAtlas at ${PHOTARA_VENDORED_UVATLAS_DIR}")
     else()
-        message(WARNING "Microsoft UVAtlas was not found; unwrap_uv() will report that the backend is unavailable")
+        find_package(uvatlas CONFIG QUIET)
+        if(TARGET Microsoft::UVAtlas)
+            set(PHOTARA_UVATLAS_TARGET Microsoft::UVAtlas)
+            set(PHOTARA_HAS_UVATLAS ON)
+        elseif(WIN32 AND PHOTARA_FETCH_UVATLAS)
+            include(FetchContent)
+            set(BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+            set(UVATLAS_USE_OPENMP ${PHOTARA_UVATLAS_USE_OPENMP} CACHE BOOL "" FORCE)
+            FetchContent_Declare(
+                uvatlas
+                URL https://codeload.github.com/microsoft/UVAtlas/tar.gz/refs/tags/oct2025
+                URL_HASH SHA256=13c2d0d1cbff2924a2aa1e24748ef10c161a6e54ac8eb0e5a3f42b8d54e471af
+                DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+            FetchContent_MakeAvailable(uvatlas)
+            set(PHOTARA_UVATLAS_TARGET UVAtlas)
+            set(PHOTARA_HAS_UVATLAS ON)
+        else()
+            message(WARNING "Microsoft UVAtlas was not found; unwrap_uv() will report that the backend is unavailable")
+        endif()
     endif()
 endif()
 

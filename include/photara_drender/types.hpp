@@ -111,7 +111,10 @@ struct UvAtlasOptions {
     float max_stretch = 1.0F / 6.0F;
     float gutter = 1.0F;
     std::optional<bool> quality = std::nullopt;
-    std::uint32_t parallel_partitions = 1;
+    // 0 selects the partition count automatically (multiple partitions for large meshes,
+    // a single UVAtlasCreate call for small ones). Set 1 to force the single-chart path
+    // or N > 1 to force that many PCA partitions.
+    std::uint32_t parallel_partitions = 0;
     std::uint32_t worker_count = 0;
 };
 

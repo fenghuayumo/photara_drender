@@ -39,14 +39,31 @@ void validate_input(
     if (std::ranges::any_of(indices, [vertex_count](std::uint32_t index) { return index >= vertex_count; })) {
         throw std::out_of_range("triangle_indices contains an invalid vertex index");
     }
-    if (options.width == 0 || options.height == 0 || options.parallel_partitions == 0 ||
-        options.gutter < 0.0F ||
+    if (options.width == 0 || options.height == 0 || options.gutter < 0.0F ||
         options.max_stretch < 0.0F || options.max_stretch > 1.0F) {
         throw std::invalid_argument("UV atlas dimensions, gutter, or max_stretch are invalid");
     }
-    if (options.parallel_partitions > 1 && options.max_chart_count != 0) {
-        throw std::invalid_argument("max_chart_count is not supported with parallel UVAtlas partitions");
+}
+
+// Meshes above this face count default to several PCA partitions.
+constexpr std::uint32_t kAutoPartitionFaceThreshold = 100'000;
+constexpr std::uint32_t kAutoPartitionCount = 4;
+
+// A single UVAtlasCreate call cuts every extra boundary loop of the chart it is
+// processing, and each cut forces the engine to rebuild the whole chart connectivity
+// (BuildFullConnection/FindAllEdges over every face). That cost is quadratic in the
+// mesh size and dominates large scan meshes, which routinely carry hundreds of
+// boundary loops. Partitioning the faces by PCA first keeps every cut local to a
+// partition and charts the partitions in parallel, which is one to two orders of
+// magnitude faster on such meshes while keeping the same stretch budget.
+std::uint32_t resolve_parallel_partitions(std::size_t face_count, const UvAtlasOptions& options) {
+    if (options.parallel_partitions != 0) {
+        return options.parallel_partitions;
     }
+    if (options.max_chart_count != 0) {
+        return 1;  // max_chart_count only applies to the single-call path
+    }
+    return face_count >= kAutoPartitionFaceThreshold ? kAutoPartitionCount : 1;
 }
 
 #if PHOTARA_HAS_UVATLAS
@@ -500,8 +517,15 @@ UvAtlasOutput unwrap_uv(
     throw std::runtime_error(
         "Microsoft UVAtlas support was not built; configure with PHOTARA_ENABLE_UVATLAS=ON and install uvatlas");
 #else
-    if (options.parallel_partitions > 1) {
-        return unwrap_uv_parallel(positions, triangle_indices, options);
+    const auto face_count = triangle_indices.size() / 3;
+    const std::uint32_t partitions = resolve_parallel_partitions(face_count, options);
+    if (partitions > 1) {
+        if (options.max_chart_count != 0) {
+            throw std::invalid_argument("max_chart_count is not supported with parallel UVAtlas partitions");
+        }
+        UvAtlasOptions partition_options = options;
+        partition_options.parallel_partitions = partitions;
+        return unwrap_uv_parallel(positions, triangle_indices, partition_options);
     }
     std::vector<DirectX::XMFLOAT3> directx_positions(positions.size() / 3);
     std::memcpy(directx_positions.data(), positions.data(), positions.size_bytes());

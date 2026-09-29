@@ -101,10 +101,15 @@ def unwrap_mesh_uv(
     max_stretch: float = 1.0 / 6.0,
     max_chart_count: int = 0,
     quality: Optional[bool] = None,
-    parallel_partitions: int = 1,
+    parallel_partitions: int = 0,
     worker_count: int = 0,
 ) -> UnwrappedMesh:
-    """Unwrap a mesh; quality selects UVAtlas quality/fast mode, and None lets UVAtlas choose."""
+    """Unwrap a mesh; quality selects UVAtlas quality/fast mode, and None lets UVAtlas choose.
+
+    ``parallel_partitions=0`` picks the partition count automatically: large meshes are
+    split into PCA partitions (much faster, still within the stretch budget), small meshes
+    stay on a single UVAtlasCreate call. Pass 1 to force the single call.
+    """
 
     positions = np.ascontiguousarray(positions, dtype=np.float32)
     indices = np.ascontiguousarray(indices, dtype=np.uint32)

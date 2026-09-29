@@ -61,8 +61,12 @@ regular retopology is preferred.
 
 `atlas_parallel_partitions` enables the Open3D-style path: face centroids are recursively PCA-partitioned, each
 partition is charted concurrently with `UVAtlasPartition`, and all charts are packed together once with
-`UVAtlasPack`. Mesh preparation defaults to four partitions; direct `unwrap_uv()` calls default to one. Parallel
-partitioning is faster on large meshes but may introduce additional island boundaries.
+`UVAtlasPack`. Mesh preparation defaults to four partitions, and direct `unwrap_uv()` calls default to
+`parallel_partitions=0`, which selects automatically: several partitions for meshes above 100k faces and a single
+`UVAtlasCreate` call below that. The single-call path collapses the chart's boundary loops itself and rebuilds the
+full chart connectivity for every cut, which grows quadratically with mesh size, so large scan meshes should stay on
+the partitioned path. Pass `parallel_partitions=1` to force the single call. Parallel partitioning is faster on large
+meshes but may introduce additional island boundaries.
 
 COLMAP support currently accepts undistorted `PINHOLE` and `SIMPLE_PINHOLE` text models. Other camera models must first
 be undistorted by COLMAP. `load_colmap_projection()` converts COLMAP world-to-camera poses into row-major clip matrices,
