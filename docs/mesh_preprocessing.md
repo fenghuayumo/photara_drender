@@ -68,6 +68,28 @@ full chart connectivity for every cut, which grows quadratically with mesh size,
 the partitioned path. Pass `parallel_partitions=1` to force the single call. Parallel partitioning is faster on large
 meshes but may introduce additional island boundaries.
 
+### Choosing `atlas_parallel_partitions`
+
+The value is a target, not a cap: the PCA split keeps halving until a group holds at most
+`(vertex_count - 1) / (parallel_partitions - 1)` faces, so a mesh with `F ≈ 2V` ends up with roughly two to three
+times that many groups. Read `UvAtlasOutput::partition_count` (or `UnwrappedMesh.partition_count`) for the actual
+number.
+
+Measured with `tests/benchmark_uv_atlas.py` on the two sample scan meshes (1024² atlas, gutter 1, `max_stretch = 1/6`):
+
+| requested | `mesh.ply` 886k v / 1.76M f | `images_mesh.obj` 377k v / 748k f |
+| --- | --- | --- |
+| 1 (single `UVAtlasCreate`) | 2498 s / 617 charts | 650 s / 580 charts |
+| 2 | 362 s / 575 charts | 176 s / 601 charts |
+| 4 (auto default) | 183 s / 643 charts | 38 s / 603 charts |
+| 8 | 45 s / 723 charts | 15 s / 643 charts |
+| 16 | 24 s / 931 charts | 10 s / 688 charts |
+
+Every configuration meets the stretch budget; the price of more partitions is more chart islands (extra seams and a
+few percent more duplicated vertices). Aim for roughly 50k-200k faces per partition, that is
+`parallel_partitions ≈ 1 + vertex_count / 150000`, which lands on 8 for the meshes above. Cap the charting threads
+with `worker_count` when the machine is shared, because every concurrent partition holds its own copy of the mesh.
+
 COLMAP support currently accepts undistorted `PINHOLE` and `SIMPLE_PINHOLE` text models. Other camera models must first
 be undistorted by COLMAP. `load_colmap_projection()` converts COLMAP world-to-camera poses into row-major clip matrices,
 computes camera centers, derives near/far ranges from the mesh, and leaves photographs in sRGB unless `linearize_srgb=True`.
