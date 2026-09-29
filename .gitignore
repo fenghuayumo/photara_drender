@@ -1,10 +1,88 @@
-/build/
-/build_*/
-/build_v*/
+# ---------------------------------------------------------------
+# Build trees (CMake / Ninja / Visual Studio / MSBuild)
+# Unanchored on purpose: nested builds such as
+# third_party/uvbench/build/ must be ignored too.
+# ---------------------------------------------------------------
+build/
+build[0-9]*/
+build-*/
+build_*/
+build_v*/
+out/
+cmake-build-*/
+.vs/
+Debug/
+Release/
+RelWithDebInfo/
+MinSizeRel/
+x64/
+Win32/
+obj/
+bin/
+CMakeFiles/
+CMakeScripts/
+CMakeCache.txt
+CMakeUserPresets.json
+cmake_install.cmake
+CTestTestfile.cmake
+DartConfiguration.tcl
+install_manifest.txt
+compile_commands.json
+.cache/
+.ninja_deps
+.ninja_log
+build.ninja
+rules.ninja
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.tlog
+*.lastbuildstate
+*.recipe
+ZERO_CHECK.*
+ALL_BUILD.*
+
+# ---------------------------------------------------------------
+# Compiled objects, libraries and executables
+# ---------------------------------------------------------------
+*.o
+*.obj
+*.lo
+*.a
+*.lib
+*.exp
+*.dll
+*.so
+*.so.*
+*.dylib
+*.exe
+*.pdb
+*.ilk
+*.idb
+*.res
+
+# ---------------------------------------------------------------
+# Logs and local run output
+# ---------------------------------------------------------------
+*.log
+logs/
+*.spv
+
+# ---------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------
 /.venv/
 /.pytest_cache/
+/.mypy_cache/
+/.ruff_cache/
 /dist/
 *.egg-info/
 __pycache__/
 *.py[cod]
-*.spv
+
+# ---------------------------------------------------------------
+# Local third-party checkout: CMake fetches the pinned UVAtlas
+# release itself (see PHOTARA_FETCH_UVATLAS in CMakeLists.txt).
+# Only needed next to third_party/uvbench/ for manual benchmarking.
+# ---------------------------------------------------------------
+/third_party/UVAtlas/
