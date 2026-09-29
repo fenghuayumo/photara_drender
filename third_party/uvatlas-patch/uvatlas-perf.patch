@@ -1,0 +1,1554 @@
+diff --git a/UVAtlas/isochart/isochartengine.cpp b/UVAtlas/isochart/isochartengine.cpp
+index dbbd99d..8498d18 100644
+--- a/UVAtlas/isochart/isochartengine.cpp
++++ b/UVAtlas/isochart/isochartengine.cpp
+@@ -11,6 +11,7 @@
+ #include "isochartengine.h"
+ #include "isochart.h"
+ #include "isochartmesh.h"
++#include "uvatlas_timing.h"
+ 
+ using namespace DirectX;
+ using namespace Isochart;
+@@ -101,6 +102,7 @@ HRESULT CIsochartEngine::Initialize(
+     unsigned int dwOptions) noexcept
+ {
+     DPF(1, "Initialize...");
++    UVATLAS_TIME_SCOPE_WORK("Engine::Initialize", VertexCount);
+ 
+     // 1. Check arguments and current state
+     if (!CheckInitializeParameters(
+@@ -289,6 +291,8 @@ HRESULT CIsochartEngine::ParameterizeChartsInHeapParallelized(
+     bool bFirstTime,
+     size_t MaxChartNumber)
+ {
++    UVATLAS_TIME_SCOPE("Engine::ParameterizeCharts(parallel)");
++
+     // 3.1 If Any charts needed to be partitioned
+ 
+     /// Parallelization:
+@@ -400,6 +404,8 @@ HRESULT CIsochartEngine::ParameterizeChartsInHeap(
+     bool bFirstTime,
+     size_t MaxChartNumber)
+ {
++    UVATLAS_TIME_SCOPE("Engine::ParameterizeCharts");
++
+     // 3.1 If Any charts needed to be partitioned
+     while (!m_currentChartHeap.empty())
+     {
+@@ -484,6 +490,8 @@ HRESULT CIsochartEngine::ParameterizeChartsInHeap(
+ 
+ HRESULT CIsochartEngine::GenerateNewChartsToParameterize()
+ {
++    UVATLAS_TIME_SCOPE("Engine::GenerateNewCharts");
++
+     CIsochartMesh *pChartWithMaxL2Stretch = nullptr;
+     uint32_t dwMaxIdx = 0;
+ 
+@@ -537,6 +545,7 @@ HRESULT CIsochartEngine::OptimizeParameterizedCharts(
+     float &fFinalGeoAvgL2Stretch)
+ {
+     HRESULT hr = S_OK;
++    UVATLAS_TIME_SCOPE("Engine::OptimizeParameterizedCharts");
+ 
+     float fCurrAvgL2SquaredStretch;
+     if (IsIMTSpecified())
+@@ -622,6 +631,7 @@ HRESULT CIsochartEngine::PartitionByGlobalAvgL2Stretch(
+     uint32_t *pFaceAttributeIDOut)
+ {
+     HRESULT hr = S_OK;
++    UVATLAS_TIME_SCOPE("Engine::Partition");
+ 
+     // 1.  Check current state and parameter.
+     if (ISOCHART_ST_UNINITILAIZED == m_state)
+@@ -840,6 +850,7 @@ HRESULT CIsochartEngine::Pack(
+     _In_opt_ std::vector<uint32_t> *pvAttributeID) noexcept
+ {
+     DPF(1, "Packing Charts...");
++    UVATLAS_TIME_SCOPE("Engine::Pack");
+     if (!CheckPackParameters(
+         Width, Height, Gutter,
+         pvVertexArrayOut,
+@@ -1209,6 +1220,7 @@ HRESULT CIsochartEngine::ApplyInitEngine(
+     bool bIsForPartition)
+ {
+     HRESULT hr = S_OK;
++    UVATLAS_TIME_SCOPE_WORK("Engine::ApplyInitEngine", baseInfo.dwFaceCount);
+ 
+     // 1. Build Root Chart
+     auto pRootChart = new (std::nothrow) CIsochartMesh(baseInfo, m_callbackSchemer, *this);
+diff --git a/UVAtlas/isochart/isochartmesh.cpp b/UVAtlas/isochart/isochartmesh.cpp
+index e670de4..54037a0 100644
+--- a/UVAtlas/isochart/isochartmesh.cpp
++++ b/UVAtlas/isochart/isochartmesh.cpp
+@@ -46,10 +46,13 @@
+ */
+ 
+ #include "pch.h"
++#include <unordered_map>
++#include <unordered_set>
+ #include "maxheap.hpp"
+ #include "isochartmesh.h"
+ #include "progressivemesh.h"
+ #include "vertiter.h"
++#include "uvatlas_timing.h"
+ 
+ using namespace Isochart;
+ using namespace DirectX;
+@@ -259,6 +262,7 @@ HRESULT CIsochartMesh::BuildRootChart(
+ {
+     assert(pFaceIndexArray != nullptr);
+     assert(pChart != nullptr);
++    UVATLAS_TIME_SCOPE_WORK("Chart::BuildRootChart", baseInfo.dwFaceCount);
+ 
+     HRESULT hr = S_OK;
+ 
+@@ -382,16 +386,20 @@ namespace
+     };
+ 
+     static bool IsNeedToSplit(
+-        std::vector<EdgeInfoItem> &edgeList,
++        std::unordered_map<uint64_t, EdgeInfoItem> &edgeMap,
++        uint32_t dwVertexID0,
+         uint32_t dwPeerVertID,
+         uint32_t dwCurrentFaceID,
+         uint32_t *rgdwAdjacency,
+         EdgeInfoItem **ppEdge)
+     {
+-        for (size_t i = 0; i < edgeList.size(); i++)
++        const uint64_t key = (static_cast<uint64_t>(dwVertexID0) << 32) |
++            static_cast<uint64_t>(dwPeerVertID);
++        const auto existing = edgeMap.find(key);
++        if (existing != edgeMap.end())
+         {
+-            EdgeInfoItem &et = edgeList[i];
+-            if (dwPeerVertID == et.dwPeerVertID)
++            EdgeInfoItem &et = existing->second;
++            assert(et.dwPeerVertID == dwPeerVertID);
+             {
+                 assert(et.dwFaceID[0] != INVALID_FACE_ID);
+                 *ppEdge = &et;
+@@ -418,18 +426,19 @@ namespace
+         edgeInfo.dwFaceID[0] = dwCurrentFaceID;
+         edgeInfo.dwFaceID[1] = INVALID_FACE_ID;
+         edgeInfo.bSplit = false;
+-        edgeList.push_back(edgeInfo);
++        *ppEdge = &edgeMap.emplace(key, edgeInfo).first->second;
+         return false;
+     }
+ 
+-    static HRESULT AddConnectedFalseEdges(std::vector<uint32_t> *pList, const uint32_t *pdwAdj, const uint32_t *pdwFalseEdges, uint32_t uFace)
++    static HRESULT AddConnectedFalseEdges(std::vector<uint32_t> *pList, std::unordered_set<uint32_t> *pListSet, const uint32_t *pdwAdj, const uint32_t *pdwFalseEdges, uint32_t uFace)
+     {
+-        if (isInArray(*pList, uFace))
++        if (pListSet->count(uFace) != 0)
+             return S_OK;
+ 
+         try
+         {
+             pList->push_back(uFace);
++            pListSet->insert(uFace);
+         }
+         catch (std::bad_alloc &)
+         {
+@@ -446,7 +455,7 @@ namespace
+             size_t uNeighbor = uFace * 3 + i;
+             if (pdwFalseEdges[uNeighbor] != uint32_t(-1))
+             {
+-                if (FAILED(hr = AddConnectedFalseEdges(pList, pdwAdj, pdwFalseEdges, pdwAdj[uNeighbor])))
++                if (FAILED(hr = AddConnectedFalseEdges(pList, pListSet, pdwAdj, pdwFalseEdges, pdwAdj[uNeighbor])))
+                     return hr;
+             }
+         }
+@@ -463,13 +472,12 @@ namespace
+         bool &bChangedVertex)
+     {
+         bChangedVertex = false;
++        UVATLAS_TIME_SCOPE_WORK("RootChart::SplitSharedEdges", dwFaceCount);
+ 
+         std::vector<uint32_t> splitFaceList;
+-        std::unique_ptr<std::vector<EdgeInfoItem>[]> pVertEdgeList(new (std::nothrow) std::vector<EdgeInfoItem>[dwNewVertCount]);
+-        if (!pVertEdgeList)
+-        {
+-            return E_OUTOFMEMORY;
+-        }
++        std::unordered_set<uint32_t> splitFaceSet;
++        std::unordered_map<uint64_t, EdgeInfoItem> edgeMap;
++        edgeMap.reserve(dwFaceCount * 2);
+ 
+         std::vector<uint32_t> splitEdgePos;
+ 
+@@ -488,28 +496,44 @@ namespace
+ 
+                 EdgeInfoItem *pEdge = nullptr;
+                 if (IsNeedToSplit(
+-                    pVertEdgeList[v1],
++                    edgeMap,
++                    v1,
+                     v2,
+                     static_cast<uint32_t>(iFace),
+                     rgdwAdjacency,
+                     &pEdge))
+                 {
+-                    HRESULT hr = AddConnectedFalseEdges(&splitFaceList, rgdwAdjacency, rgdwFalseEdges, static_cast<uint32_t>(iFace));
++                    HRESULT hr = AddConnectedFalseEdges(&splitFaceList, &splitFaceSet, rgdwAdjacency, rgdwFalseEdges, static_cast<uint32_t>(iFace));
+                     if (FAILED(hr))
+                     {
+                         return hr;
+                     }
+                     if (!pEdge->bSplit)
+                     {
+-                        if (!addNoduplicateItem(splitFaceList, pEdge->dwFaceID[0]))
++                        auto insertFace = [&](uint32_t faceID) -> HRESULT
+                         {
+-                            return E_OUTOFMEMORY;
++                            if (splitFaceSet.insert(faceID).second)
++                            {
++                                try
++                                {
++                                    splitFaceList.push_back(faceID);
++                                }
++                                catch (std::bad_alloc &)
++                                {
++                                    return E_OUTOFMEMORY;
++                                }
++                            }
++                            return S_OK;
++                        };
++                        if (FAILED(hr = insertFace(pEdge->dwFaceID[0])))
++                        {
++                            return hr;
+                         }
+                         if (pEdge->dwFaceID[1] != INVALID_FACE_ID)
+                         {
+-                            if (!addNoduplicateItem(splitFaceList, pEdge->dwFaceID[1]))
++                            if (FAILED(hr = insertFace(pEdge->dwFaceID[1])))
+                             {
+-                                return E_OUTOFMEMORY;
++                                return hr;
+                             }
+                         }
+                         pEdge->bSplit = true;
+@@ -556,12 +580,24 @@ namespace
+         size_t dwFaceCount,
+         size_t &dwNewVertCount)
+     {
++        UVATLAS_TIME_SCOPE_WORK("RootChart::ReorderVertices", dwFaceCount);
+         CVertIter vertIter(rgdwAdjacency);
+         memset(rgdwNewFaceIdx, 0xff, dwFaceCount * 3 * sizeof(uint32_t));
+ 
+         dwNewVertCount = 0;
++        size_t dwNextReport = 0;
++#if defined(UVATLAS_ENABLE_TIMING)
++        size_t dwDerailedWalks = 0;
++#endif
+         for (size_t iFace = 0; iFace < dwFaceCount; iFace++)
+         {
++            if (iFace >= dwNextReport)
++            {
++                std::fprintf(stderr,
++                    "[uvatlas]       ReorderVertices progress: %zu/%zu faces, newVerts=%zu\n",
++                    iFace, dwFaceCount, dwNewVertCount);
++                dwNextReport = iFace + 50000;
++            }
+             for (size_t iVert = 0; iVert < 3; iVert++)
+             {
+                 if (rgdwNewFaceIdx[iFace * 3 + iVert] != INVALID_VERT_ID)
+@@ -581,6 +617,19 @@ namespace
+                     uint32_t dwCurFaceID = vertIter.GetCurrentFace();
+                     uint32_t dwCurVertIdx = vertIter.GetCurrentVertIdx();
+ 
++                    // Non-manifold input can derail this fan walk so that it never
++                    // returns to the begin face, which would spin forever. Every
++                    // corner visited by this walk carries the walk's own vertex id,
++                    // so meeting one again proves the fan is broken: stop instead of
++                    // looping, and let SplitSharedEdges() handle the seam.
++                    if (FACE_ARRAY_ITME(rgdwNewFaceIdx, dwCurFaceID, dwCurVertIdx) == dwCenterVertID)
++                    {
++#if defined(UVATLAS_ENABLE_TIMING)
++                        ++dwDerailedWalks;
++#endif
++                        break;
++                    }
++
+                     FACE_ARRAY_ITME(
+                         rgdwNewFaceIdx, dwCurFaceID, dwCurVertIdx) = dwCenterVertID;
+                 }
+@@ -588,12 +637,21 @@ namespace
+             }
+         }
+ 
++#if defined(UVATLAS_ENABLE_TIMING)
++        if (dwDerailedWalks != 0)
++        {
++            std::fprintf(stderr,
++                "[uvatlas]       ReorderVertices: bounded %zu derailed fan walks (non-manifold input)\n",
++                dwDerailedWalks);
++        }
++#endif
+         return S_OK;
+     }
+ }
+ 
+ HRESULT CIsochartMesh::ReBuildRootChartByAdjacence()
+ {
++    UVATLAS_TIME_SCOPE_WORK("Chart::ReBuildRootChartByAdjacence", m_dwFaceNumber);
+     assert(m_baseInfo.bIsFaceAdjacenctArrayReady);
+ 
+     std::unique_ptr<uint32_t[]> rgdwNewFaceIdx(new (std::nothrow) uint32_t[m_dwFaceNumber * 3]);
+@@ -686,6 +744,7 @@ HRESULT CIsochartMesh::PrepareProcessing(
+     bool bIsForPartition)
+ {
+     HRESULT hr = S_OK;
++    UVATLAS_TIME_SCOPE_WORK("Chart::PrepareProcessing", m_dwFaceNumber);
+     size_t dwBoundaryNumber = 0;
+     bool bIsSimpleChart = false;
+ 
+@@ -721,6 +780,7 @@ HRESULT CIsochartMesh::PrepareProcessing(
+ HRESULT CIsochartMesh::Partition()
+ {
+     assert(m_bVertImportanceDone);
++    UVATLAS_TIME_SCOPE_WORK("Chart::Partition", m_dwFaceNumber);
+ 
+     HRESULT hr = S_OK;
+ 
+@@ -838,6 +898,7 @@ LEnd:
+ HRESULT CIsochartMesh::ComputeBiParitionLandmark()
+ {
+     HRESULT hr = S_OK;
++    UVATLAS_TIME_SCOPE_WORK("Chart::ComputeBiParitionLandmark", m_dwVertNumber);
+     if (m_bOrderedLandmark)
+     {
+         return S_OK;
+@@ -1129,6 +1190,7 @@ HRESULT CIsochartMesh::PrepareSimpleChart(
+     bool &bIsSimpleChart)
+ {
+     HRESULT hr = S_OK;
++    UVATLAS_TIME_SCOPE_WORK("Chart::PrepareSimpleChart", m_dwFaceNumber);
+ 
+     dwBoundaryNumber = 0;
+     bIsSimpleChart = false;
+@@ -1190,6 +1252,8 @@ HRESULT CIsochartMesh::IsomapParameterlization(
+     float **ppfVertCombineDistance,
+     float **ppfVertMappingCoord)
+ {
++    UVATLAS_TIME_SCOPE_WORK("Chart::IsomapParameterization", m_dwVertNumber);
++
+     assert(ppfVertGeodesicDistance != nullptr);
+     assert(ppfVertCombineDistance != nullptr);
+     assert(ppfVertMappingCoord != nullptr);
+@@ -1373,6 +1437,7 @@ LEnd:
+ HRESULT CIsochartMesh::BuildFullConnection(bool &bIsManifold)
+ {
+     HRESULT hr = S_OK;
++    UVATLAS_TIME_SCOPE_WORK("Chart::BuildFullConnection", m_dwFaceNumber);
+ 
+     assert(m_pVerts != nullptr);
+     assert(m_pFaces != nullptr);
+@@ -1468,6 +1533,7 @@ namespace
+ HRESULT CIsochartMesh::FindAllEdges(
+     bool &bIsManifold)
+ {
++    UVATLAS_TIME_SCOPE_WORK("Chart::FindAllEdges", m_dwFaceNumber);
+     ISOCHARTEDGE *pEdge;
+     ISOCHARTEDGE tempEdge;
+     EdgeTableItem tempEdgeTableItem;
+@@ -1631,6 +1697,7 @@ public:
+ HRESULT CIsochartMesh::CleanNonmanifoldMesh(bool &bCleaned)
+ {
+     HRESULT hr = S_OK;
++    UVATLAS_TIME_SCOPE_WORK("Chart::CleanNonmanifoldMesh", m_dwVertNumber);
+     std::vector<uint32_t> vertexFaceList;
+     std::vector<uint32_t> newVertMap;
+     uint32_t dwNewVertID;
+@@ -1780,6 +1847,7 @@ HRESULT CIsochartMesh::CleanNonmanifoldMesh(bool &bCleaned)
+ 
+ HRESULT CIsochartMesh::SetEdgeSplitAttribute()
+ {
++    UVATLAS_TIME_SCOPE_WORK("Chart::SetEdgeSplitAttribute", m_dwEdgeNumber);
+     // The the bCanBeSplit item of each edge. If user don't specified the parameter, all edges can
+     // be splitted
+     HRESULT hr = S_OK;
+@@ -1867,6 +1935,7 @@ bool CIsochartMesh::IsAllFaceVertexOrderValid()
+ HRESULT CIsochartMesh::SortAdjacentVertices(
+     bool &bIsManifold)
+ {
++    UVATLAS_TIME_SCOPE_WORK("Chart::SortAdjacentVertices", m_dwVertNumber);
+     bIsManifold = false;
+ 
+     try
+@@ -2258,6 +2327,7 @@ void CIsochartMesh::GetFaceAdjacentArray(
+ HRESULT CIsochartMesh::CheckAndDivideMultipleObjects(
+     bool &bHasMultiObjects)
+ {
++    UVATLAS_TIME_SCOPE_WORK("Chart::CheckAndDivideMultipleObjects", m_dwVertNumber);
+ 
+     assert(m_dwVertNumber != 0 || m_dwFaceNumber != 0);
+ 
+@@ -2434,6 +2504,7 @@ HRESULT CIsochartMesh::CheckAndCutMultipleBoundaries(
+ {
+     assert(m_dwVertNumber != 0);
+     DPF(3, "Check and cut multi boundary...\n");
++    UVATLAS_TIME_SCOPE_WORK("Chart::CheckAndCutMultipleBoundaries", m_dwVertNumber);
+ 
+     dwBoundaryNumber = 0;
+ 
+@@ -2500,6 +2571,7 @@ HRESULT CIsochartMesh::FindAllBoundaries(
+     uint32_t *pdwVertBoundaryID)
+ {
+     assert(pdwVertBoundaryID != nullptr);
++    UVATLAS_TIME_SCOPE_WORK("Chart::FindAllBoundaries", m_dwVertNumber);
+ 
+     HRESULT hr = S_OK;
+ 
+@@ -2593,6 +2665,7 @@ HRESULT CIsochartMesh::CalMinPathToOtherBoundary(
+     uint32_t &dwPeerVertID,
+     float &fDistance)
+ {
++    UVATLAS_TIME_SCOPE_WORK("Chart::CalMinPathToOtherBoundary", m_dwVertNumber);
+     std::unique_ptr<bool[]> vertProcessed(new (std::nothrow) bool[m_dwVertNumber]);
+     std::unique_ptr<CMaxHeapItem<float, uint32_t>[]> heapItem(new (std::nothrow) CMaxHeapItem<float, uint32_t>[m_dwVertNumber]);
+     if (!vertProcessed || !heapItem)
+@@ -2786,6 +2859,175 @@ HRESULT CIsochartMesh::CalMinPathBetweenBoundaries(
+ {
+     HRESULT hr = S_OK;
+     float fMinDistance = FLT_MAX;
++    UVATLAS_TIME_SCOPE_WORK("Chart::CalMinPathBetweenBoundaries(pairs)", boundaryRecord.size() - 1);
++    UNREFERENCED_PARAMETER(pdwVertBoundaryID);
++
++    // Local performance patch: the original implementation launched one
++    // multi-source Dijkstra per boundary loop and kept the closest result,
++    // costing O(B) full searches per cut round. A single labeled multi-source
++    // Dijkstra over every boundary vertex finds the same globally-closest
++    // pair of loops in one pass: the minimizing edge whose endpoints were
++    // reached from two different loops is exactly the closest pair.
++    std::unique_ptr<CMaxHeapItem<float, uint32_t>[]> heapItem(
++        new (std::nothrow) CMaxHeapItem<float, uint32_t>[m_dwVertNumber]);
++    std::unique_ptr<bool[]> vertProcessed(new (std::nothrow) bool[m_dwVertNumber]);
++    // Local fix: every reached vertex must remember which boundary loop its
++    // Dijkstra tree grew from. pdwVertBoundaryID alone is not enough because it
++    // is only meaningful for boundary vertices, so comparing it also accepts
++    // degenerate pairs such as (boundary vertex X, interior neighbour of X),
++    // whose joined path starts and ends on the same loop and therefore cuts
++    // nothing. The propagated loop id rejects those and keeps the closest
++    // genuine pair of distinct loops.
++    std::unique_ptr<uint32_t[]> vertSourceLoop(
++        new (std::nothrow) uint32_t[m_dwVertNumber]);
++    if (!heapItem || !vertProcessed || !vertSourceLoop)
++    {
++        return E_OUTOFMEMORY;
++    }
++    memset(vertProcessed.get(), 0, sizeof(bool) * m_dwVertNumber);
++    memset(vertSourceLoop.get(), 0xff, sizeof(uint32_t) * m_dwVertNumber);
++
++    auto pHeapItem = heapItem.get();
++    CMaxHeap<float, uint32_t> heap;
++    if (!heap.resize(m_dwVertNumber))
++    {
++        return E_OUTOFMEMORY;
++    }
++
++    ISOCHARTVERTEX *pCurrentVertex = m_pVerts;
++    for (size_t i = 0; i < m_dwVertNumber; i++)
++    {
++        pCurrentVertex->fGeodesicDistance = FLT_MAX;
++        pCurrentVertex->dwNextVertIDOnPath = INVALID_VERT_ID;
++        pCurrentVertex++;
++    }
++
++    for (size_t i = 0; i + 1 < boundaryRecord.size(); i++)
++    {
++        for (size_t j = boundaryRecord[i]; j < boundaryRecord[i + 1]; j++)
++        {
++            pCurrentVertex = allBoundaryList[j];
++            pHeapItem[pCurrentVertex->dwID].m_data = pCurrentVertex->dwID;
++            if (pCurrentVertex->fGeodesicDistance > 0.0f)
++            {
++                pCurrentVertex->fGeodesicDistance = 0.0f;
++                vertSourceLoop[pCurrentVertex->dwID] = static_cast<uint32_t>(i);
++                pHeapItem[pCurrentVertex->dwID].m_weight = 0.0f;
++                if (!heap.insert(pHeapItem + pCurrentVertex->dwID))
++                {
++                    return E_OUTOFMEMORY;
++                }
++            }
++        }
++    }
++
++    while (!heap.empty())
++    {
++        CMaxHeapItem<float, uint32_t> *pTop = heap.cutTop();
++        pCurrentVertex = m_pVerts + pTop->m_data;
++        vertProcessed[pCurrentVertex->dwID] = true;
++
++        for (size_t j = 0; j < pCurrentVertex->edgeAdjacent.size(); j++)
++        {
++            const ISOCHARTEDGE &edge = m_edges[pCurrentVertex->edgeAdjacent[j]];
++            if (m_baseInfo.pdwSplitHint && !edge.bCanBeSplit)
++            {
++                continue;
++            }
++
++            const uint32_t dwAdjacentVertID =
++                (edge.dwVertexID[0] == pCurrentVertex->dwID) ? edge.dwVertexID[1] : edge.dwVertexID[0];
++
++            ISOCHARTVERTEX *pAdjacentVertex = m_pVerts + dwAdjacentVertID;
++            if (vertProcessed[dwAdjacentVertID])
++            {
++                continue;
++            }
++            const float fNewDistance = pCurrentVertex->fGeodesicDistance + edge.fLength;
++            if (pAdjacentVertex->fGeodesicDistance > fNewDistance)
++            {
++                pAdjacentVertex->fGeodesicDistance = fNewDistance;
++                pAdjacentVertex->dwNextVertIDOnPath = pCurrentVertex->dwID;
++                vertSourceLoop[dwAdjacentVertID] = vertSourceLoop[pCurrentVertex->dwID];
++
++                if (pHeapItem[dwAdjacentVertID].isItemInHeap())
++                {
++                    heap.update(pHeapItem + dwAdjacentVertID, -fNewDistance);
++                }
++                else
++                {
++                    pHeapItem[dwAdjacentVertID].m_data = dwAdjacentVertID;
++                    pHeapItem[dwAdjacentVertID].m_weight = -fNewDistance;
++                    if (!heap.insert(pHeapItem + dwAdjacentVertID))
++                    {
++                        return E_OUTOFMEMORY;
++                    }
++                }
++            }
++        }
++    }
++
++    uint32_t dwMeetVertID0 = INVALID_VERT_ID;
++    uint32_t dwMeetVertID1 = INVALID_VERT_ID;
++    for (size_t i = 0; i < m_edges.size(); i++)
++    {
++        const ISOCHARTEDGE &edge = m_edges[i];
++        if (m_baseInfo.pdwSplitHint && !edge.bCanBeSplit)
++        {
++            continue;
++        }
++
++        const uint32_t dwVertID0 = edge.dwVertexID[0];
++        const uint32_t dwVertID1 = edge.dwVertexID[1];
++        const float d0 = m_pVerts[dwVertID0].fGeodesicDistance;
++        const float d1 = m_pVerts[dwVertID1].fGeodesicDistance;
++        if (d0 == FLT_MAX || d1 == FLT_MAX)
++        {
++            continue;
++        }
++        const uint32_t dwLoop0 = vertSourceLoop[dwVertID0];
++        const uint32_t dwLoop1 = vertSourceLoop[dwVertID1];
++        if (dwLoop0 == INVALID_VERT_ID || dwLoop1 == INVALID_VERT_ID || dwLoop0 == dwLoop1)
++        {
++            continue;
++        }
++
++        const float fCandidate = d0 + edge.fLength + d1;
++        if (fCandidate < fMinDistance)
++        {
++            fMinDistance = fCandidate;
++            dwMeetVertID0 = dwVertID0;
++            dwMeetVertID1 = dwVertID1;
++        }
++    }
++
++    if (dwMeetVertID0 != INVALID_VERT_ID)
++    {
++        std::vector<uint32_t> pathToSource0;
++        std::vector<uint32_t> pathToSource1;
++        FAILURE_RETURN(RetreiveVertDijkstraPathToSource(dwMeetVertID0, pathToSource0));
++        FAILURE_RETURN(RetreiveVertDijkstraPathToSource(dwMeetVertID1, pathToSource1));
++
++        minDijkstraPath.swap(pathToSource0);
++        minDijkstraPath.push_back(dwMeetVertID1);
++        for (size_t i = pathToSource1.size() - 1; i > 0; i--)
++        {
++            minDijkstraPath.push_back(pathToSource1[i - 1]);
++        }
++    }
++
++    return hr;
++}
++
++HRESULT CIsochartMesh::CalMinPathBetweenBoundariesOriginal(
++    VERTEX_ARRAY &allBoundaryList,
++    std::vector<uint32_t> &boundaryRecord,
++    uint32_t *pdwVertBoundaryID,
++    std::vector<uint32_t> &minDijkstraPath)
++{
++    HRESULT hr = S_OK;
++    float fMinDistance = FLT_MAX;
++    UVATLAS_TIME_SCOPE_WORK("Chart::CalMinPathBetweenBoundariesOriginal(pairs)", boundaryRecord.size() - 1);
+ 
+     for (size_t i = 0; i < boundaryRecord.size() - 1; i++)
+     {
+@@ -2829,12 +3071,63 @@ HRESULT CIsochartMesh::DecreaseBoundary(
+     DPF(3, "....Has %zu boundies...\n", dwBoundaryNumber);
+ 
+     std::vector<uint32_t> minDijkstraPath;
+-    FAILURE_RETURN(
+-        CalMinPathBetweenBoundaries(
+-            allBoundaryList,
+-            boundaryRecord,
+-            pdwVertBoundaryID,
+-            minDijkstraPath));
++    // Diagnostic toggle: UVATLAS_ORIGINAL_CUT=1 restores the pre-rewrite
++    // boundary-pair search so both variants can be compared on one build.
++    static const bool bUseOriginalCut = []()
++    {
++        char *pValue = nullptr;
++        size_t dwSize = 0;
++        const bool bSet = (_dupenv_s(&pValue, &dwSize, "UVATLAS_ORIGINAL_CUT") == 0 && pValue != nullptr);
++        free(pValue);
++        return bSet;
++    }();
++    if (bUseOriginalCut)
++    {
++        FAILURE_RETURN(
++            CalMinPathBetweenBoundariesOriginal(
++                allBoundaryList,
++                boundaryRecord,
++                pdwVertBoundaryID,
++                minDijkstraPath));
++    }
++    else
++    {
++        FAILURE_RETURN(
++            CalMinPathBetweenBoundaries(
++                allBoundaryList,
++                boundaryRecord,
++                pdwVertBoundaryID,
++                minDijkstraPath));
++    }
++
++#if defined(UVATLAS_ENABLE_TIMING)
++    {
++        static std::atomic<unsigned> s_dbgCutCalls{ 0 };
++        const unsigned dbgCall = s_dbgCutCalls.fetch_add(1, std::memory_order_relaxed);
++        if (dbgCall < 6)
++        {
++            size_t dwBoundaryVerts = 0;
++            for (uint32_t vid : minDijkstraPath)
++            {
++                if (vid < m_dwVertNumber && m_pVerts[vid].bIsBoundary)
++                {
++                    ++dwBoundaryVerts;
++                }
++            }
++            std::fprintf(stderr,
++                "[uvatlas] CUT dbg#%u%s loops=%zu path=%zu boundaryVertsOnPath=%zu first=%u(%d) last=%u(%d)\n",
++                dbgCall,
++                bUseOriginalCut ? "(orig)" : "(new)",
++                boundaryRecord.size() - 1,
++                minDijkstraPath.size(),
++                dwBoundaryVerts,
++                minDijkstraPath.empty() ? 0u : minDijkstraPath.front(),
++                minDijkstraPath.empty() ? -1 : int(m_pVerts[minDijkstraPath.front()].bIsBoundary),
++                minDijkstraPath.empty() ? 0u : minDijkstraPath.back(),
++                minDijkstraPath.empty() ? -1 : int(m_pVerts[minDijkstraPath.back()].bIsBoundary));
++        }
++    }
++#endif
+ 
+     // 4. Cut current chart along the dijkstra path gotten by 3
+     FAILURE_RETURN(
+diff --git a/UVAtlas/isochart/isochartmesh.h b/UVAtlas/isochart/isochartmesh.h
+index 0de9f22..72d0aa9 100644
+--- a/UVAtlas/isochart/isochartmesh.h
++++ b/UVAtlas/isochart/isochartmesh.h
+@@ -481,6 +481,13 @@ namespace Isochart
+             uint32_t *pdwVertBoundaryID,
+             std::vector<uint32_t> &minDijkstraPath);
+ 
++        // Original O(B) Dijkstras-per-round implementation, kept for reference.
++        HRESULT CalMinPathBetweenBoundariesOriginal(
++            VERTEX_ARRAY &allBoundaryList,
++            std::vector<uint32_t> &boundaryRecord,
++            uint32_t *pdwVertBoundaryID,
++            std::vector<uint32_t> &minDijkstraPath);
++
+         HRESULT CalMinPathToOtherBoundary(
+             VERTEX_ARRAY &allBoundaryList,
+             uint32_t dwStartIdx,
+diff --git a/UVAtlas/isochart/isomap.cpp b/UVAtlas/isochart/isomap.cpp
+index 6c13868..ddb7e14 100644
+--- a/UVAtlas/isochart/isomap.cpp
++++ b/UVAtlas/isochart/isomap.cpp
+@@ -10,6 +10,7 @@
+ #include "pch.h"
+ #include "isomap.h"
+ #include "isochartutil.h"
++#include "uvatlas_timing.h"
+ 
+ using namespace Isochart;
+ 
+@@ -33,6 +34,7 @@ CIsoMap::~CIsoMap()
+ 
+ HRESULT CIsoMap::Init(size_t dwDimension, float *pGeodesicMatrix)
+ {
++    UVATLAS_TIME_SCOPE_WORK("IsoMap::Init", dwDimension);
+     Clear();
+     assert(pGeodesicMatrix != nullptr);
+     assert(m_dwCalculatedDimension == 0);
+@@ -129,6 +131,7 @@ HRESULT CIsoMap::ComputeLargestEigen(
+     size_t &dwCalculatedDimension)
+ {
+     assert(m_pfMatrixB != nullptr);
++    UVATLAS_TIME_SCOPE_WORK("IsoMap::ComputeLargestEigen", m_dwMatrixDimension);
+     _Analysis_assume_(m_pfMatrixB != nullptr);
+     assert(m_pfAvgSquaredDstColumn != nullptr);
+     _Analysis_assume_(m_pfAvgSquaredDstColumn != nullptr);
+diff --git a/UVAtlas/isochart/lscmparam.cpp b/UVAtlas/isochart/lscmparam.cpp
+index 09ecde1..395a428 100644
+--- a/UVAtlas/isochart/lscmparam.cpp
++++ b/UVAtlas/isochart/lscmparam.cpp
+@@ -13,6 +13,7 @@
+ #include "isochartmesh.h"
+ #include "isochart.h"
+ #include "sparsematrix.hpp"
++#include "uvatlas_timing.h"
+ 
+ using namespace Isochart;
+ using namespace DirectX;
+@@ -285,6 +286,7 @@ HRESULT CIsochartMesh::CheckLinearEquationParamResult(
+     bool &bIsOverLap)
+ {
+     HRESULT hr = S_OK;
++    UVATLAS_TIME_SCOPE_WORK("Chart::LSCMParameterization", m_dwFaceNumber);
+ 
+     double fTotal2D = 0;
+     for (size_t ii = 0; ii < m_dwFaceNumber; ii++)
+diff --git a/UVAtlas/isochart/mergecharts.cpp b/UVAtlas/isochart/mergecharts.cpp
+index d784832..e091d4a 100644
+--- a/UVAtlas/isochart/mergecharts.cpp
++++ b/UVAtlas/isochart/mergecharts.cpp
+@@ -10,6 +10,7 @@
+ #include "pch.h"
+ #include "isochartmesh.h"
+ #include "maxheap.hpp"
++#include "uvatlas_timing.h"
+ 
+ using namespace Isochart;
+ using namespace DirectX;
+@@ -28,6 +29,7 @@ HRESULT CIsochartMesh::MergeSmallCharts(
+     CCallbackSchemer &callbackSchemer)
+ {
+     DPF(1, "#<Chart Number Before Merge> : %zu", chartList.size());
++    UVATLAS_TIME_SCOPE_WORK("Charts::MergeSmallCharts", chartList.size());
+     if (chartList.size() < 4)
+     {
+         return S_OK;
+diff --git a/UVAtlas/isochart/meshapplyisomap.cpp b/UVAtlas/isochart/meshapplyisomap.cpp
+index 932acb2..ca69b09 100644
+--- a/UVAtlas/isochart/meshapplyisomap.cpp
++++ b/UVAtlas/isochart/meshapplyisomap.cpp
+@@ -13,11 +13,36 @@
+ #include "ExactOneToAll.h"
+ #include "ApproximateOneToAll.h"
+ #include "mathutils.h"
++#include "uvatlas_timing.h"
+ 
+ using namespace Isochart;
+ using namespace GeodesicDist;
+ using namespace DirectX;
+ 
++#if defined(UVATLAS_ENABLE_TIMING)
++namespace
++{
++    std::atomic<unsigned long long> g_ks98_us{ 0 };
++    std::atomic<unsigned long long> g_newgeodist_us{ 0 };
++
++    struct GeoEngineScope
++    {
++        std::atomic<unsigned long long>& sink;
++        std::chrono::steady_clock::time_point start;
++
++        explicit GeoEngineScope(std::atomic<unsigned long long>& s)
++            : sink(s), start(std::chrono::steady_clock::now()) {}
++
++        ~GeoEngineScope()
++        {
++            const auto end = std::chrono::steady_clock::now();
++            sink += static_cast<unsigned long long>(
++                std::chrono::duration<double, std::micro>(end - start).count());
++        }
++    };
++}
++#endif
++
+ // define the macro to use the exact algorithm, otherwise the fast approximate algorithm is employed
+ #ifdef _USE_EXACT_ALGORITHM
+ #define ONE_TO_ALL_ENGINE m_ExactOneToAllEngine
+@@ -47,6 +72,7 @@ HRESULT CIsochartMesh::CalculateLandmarkVertices(
+ {
+     assert(m_pVerts != nullptr);
+     assert(m_bVertImportanceDone);
++    UVATLAS_TIME_SCOPE_WORK("Chart::CalculateLandmarkVertices", m_dwVertNumber);
+ 
+     std::unique_ptr<uint32_t[]> landmark(new (std::nothrow) uint32_t[m_dwVertNumber]);
+     if (!landmark)
+@@ -227,6 +253,11 @@ HRESULT CIsochartMesh::CalculateGeodesicDistance(
+     {
+         return S_OK;
+     }
++    UVATLAS_TIME_SCOPE_WORK("Chart::CalculateGeodesicDistance(landmarks)", vertList.size());
++#if defined(UVATLAS_ENABLE_TIMING)
++    const unsigned long long ks98_before = g_ks98_us.load(std::memory_order_relaxed);
++    const unsigned long long newgeodist_before = g_newgeodist_us.load(std::memory_order_relaxed);
++#endif
+     assert(!(!pfVertGeodesicDistance && !pfVertCombineDistance));
+ 
+     HRESULT hr = S_OK;
+@@ -340,6 +371,12 @@ HRESULT CIsochartMesh::CalculateGeodesicDistance(
+         delete[] pfTempGeodesicDistance;
+     }
+ 
++#if defined(UVATLAS_ENABLE_TIMING)
++    std::fprintf(stderr, "[uvatlas]   geodesic engines: ks98=%8.2f ms  newgeodist=%8.2f ms\n",
++        static_cast<double>(g_ks98_us.load(std::memory_order_relaxed) - ks98_before) / 1000.0,
++        static_cast<double>(g_newgeodist_us.load(std::memory_order_relaxed) - newgeodist_before) / 1000.0);
++#endif
++
+     return S_OK;
+ }
+ 
+@@ -478,6 +515,9 @@ HRESULT CIsochartMesh::CalculateGeodesicDistanceToVertexNewGeoDist(
+     uint32_t dwSourceVertID,
+     uint32_t *pdwFarestPeerVertID)
+ {
++#if defined(UVATLAS_ENABLE_TIMING)
++    const GeoEngineScope _uvas_geo_scope{ g_newgeodist_us };
++#endif
+     try
+     {
+         ONE_TO_ALL_ENGINE.SetSrcVertexIdx(dwSourceVertID);
+@@ -517,6 +557,9 @@ HRESULT CIsochartMesh::CalculateGeodesicDistanceToVertexKS98(
+     bool bIsSignalDistance,
+     uint32_t *pdwFarestPeerVertID) const
+ {
++#if defined(UVATLAS_ENABLE_TIMING)
++    const GeoEngineScope _uvas_geo_scope{ g_ks98_us };
++#endif
+     uint32_t dwFarestVertID = 0;
+ 
+     std::unique_ptr<bool[]> pbVertProcessed(new (std::nothrow) bool[m_dwVertNumber]);
+@@ -749,6 +792,7 @@ HRESULT CIsochartMesh::CalculateVertMappingCoord(
+                                 // store UV coordinate in vertex
+ {
+     assert(pfVertGeodesicDistance != nullptr);
++    UVATLAS_TIME_SCOPE_WORK("Chart::CalculateVertMappingCoord", m_dwVertNumber);
+     assert(dwPrimaryEigenDimension >= 2);
+     _Analysis_assume_(dwPrimaryEigenDimension >= 2);
+ 
+diff --git a/UVAtlas/isochart/meshcommon.inl b/UVAtlas/isochart/meshcommon.inl
+index 5b095eb..63dce6b 100644
+--- a/UVAtlas/isochart/meshcommon.inl
++++ b/UVAtlas/isochart/meshcommon.inl
+@@ -11,9 +11,12 @@
+ // Signal-specialized parameterization
+ //  In Proceedings of Eurographics Workshop on Rendering 2002(2002)
+ 
++// Local performance patch: accelerated segment-overlap testing.
++#include "segmentoverlap.h"
++#include "uvatlas_timing.h"
++
+ namespace Isochart
+ {
+-
+     /////////////////////////////////////////////////////////////
+     ///////////////////////////Tool-Methods//////////////////////
+     /////////////////////////////////////////////////////////////
+@@ -85,9 +88,9 @@ namespace Isochart
+         CIsochartMesh *pMesh,
+         bool &bIsOverlapping)
+     {
+-
+-        ISOCHARTEDGE *pEdge1 = nullptr;
+-        ISOCHARTEDGE *pEdge2 = nullptr;
++        UVATLAS_TIME_SCOPE_WORK("Overlap::IsParameterizationOverlapping(boundary)",
++            std::count_if(pMesh->m_edges.begin(), pMesh->m_edges.end(),
++                [](const ISOCHARTEDGE &e) { return e.bIsBoundary; }));
+ 
+         // Collect all boundary edges
+         std::vector<ISOCHARTEDGE *> boundaryEdgeList;
+@@ -96,10 +99,10 @@ namespace Isochart
+         {
+             for (size_t i = 0; i < pMesh->m_edges.size(); i++)
+             {
+-                pEdge1 = &(pMesh->m_edges[i]);
+-                if (pEdge1->bIsBoundary)
++                const ISOCHARTEDGE &edge = pMesh->m_edges[i];
++                if (edge.bIsBoundary)
+                 {
+-                    boundaryEdgeList.push_back(pEdge1);
++                    boundaryEdgeList.push_back(&pMesh->m_edges[i]);
+                 }
+             }
+         }
+@@ -110,34 +113,21 @@ namespace Isochart
+ 
+         assert(!boundaryEdgeList.empty());
+ 
+-        for (size_t i = 0; i < boundaryEdgeList.size() - 1; i++)
+-        {
+-            pEdge1 = boundaryEdgeList[i];
+-            for (size_t j = i + 1; j < boundaryEdgeList.size(); j++)
++        bIsOverlapping = detail::AnySegmentsIntersectFast(
++            boundaryEdgeList.size(),
++            [pMesh, &boundaryEdgeList](size_t i, uint32_t &vid0, uint32_t &vid1,
++                DirectX::XMFLOAT2 &p0, DirectX::XMFLOAT2 &p1)
+             {
+-                pEdge2 = boundaryEdgeList[j];
+-
+-                // if two edges connect together, although they have
+-                // intersection, it's not counted as overlapping
+-                if (pEdge1->dwVertexID[0] == pEdge2->dwVertexID[0] || pEdge1->dwVertexID[0] == pEdge2->dwVertexID[1] || pEdge1->dwVertexID[1] == pEdge2->dwVertexID[0] || pEdge1->dwVertexID[1] == pEdge2->dwVertexID[1])
+-                {
+-                    continue;
+-                }
+-                // If two edges doesn't connect together, but have
+-                // intersection, overlapping occurs.
+-                if (IsochartIsSegmentsIntersect(
+-                    pMesh->m_pVerts[pEdge1->dwVertexID[0]].uv,
+-                    pMesh->m_pVerts[pEdge1->dwVertexID[1]].uv,
+-                    pMesh->m_pVerts[pEdge2->dwVertexID[0]].uv,
+-                    pMesh->m_pVerts[pEdge2->dwVertexID[1]].uv))
+-                {
+-                    bIsOverlapping = true;
+-                    return S_OK;
+-                }
+-            }
+-        }
+-
+-        bIsOverlapping = false;
++                const ISOCHARTEDGE *edge = boundaryEdgeList[i];
++                vid0 = edge->dwVertexID[0];
++                vid1 = edge->dwVertexID[1];
++                p0 = pMesh->m_pVerts[vid0].uv;
++                p1 = pMesh->m_pVerts[vid1].uv;
++            },
++            [](size_t, size_t) -> bool
++            {
++                return true;
++            });
+         return S_OK;
+     }
+ 
+diff --git a/UVAtlas/isochart/meshoptimizeboundaries.cpp b/UVAtlas/isochart/meshoptimizeboundaries.cpp
+index f3ff63b..570b7ea 100644
+--- a/UVAtlas/isochart/meshoptimizeboundaries.cpp
++++ b/UVAtlas/isochart/meshoptimizeboundaries.cpp
+@@ -26,6 +26,7 @@
+ 
+ #include "pch.h"
+ #include "isochartmesh.h"
++#include "uvatlas_timing.h"
+ 
+ using namespace Isochart;
+ using namespace DirectX;
+@@ -562,6 +563,7 @@ HRESULT CIsochartMesh::OptimizeBoundaryByStretch(
+     bool &bIsOptimized)
+ {
+     bIsOptimized = false;
++    UVATLAS_TIME_SCOPE_WORK("Chart::OptimizeBoundaryByStretch", m_dwFaceNumber);
+     if (dwMaxSubchartCount < 2 || m_children.size() < 2)
+     {
+         return S_OK;
+diff --git a/UVAtlas/isochart/meshoptimizestretch.cpp b/UVAtlas/isochart/meshoptimizestretch.cpp
+index c122e06..0db8be7 100644
+--- a/UVAtlas/isochart/meshoptimizestretch.cpp
++++ b/UVAtlas/isochart/meshoptimizestretch.cpp
+@@ -42,6 +42,7 @@
+ #include "isochartmesh.h"
+ #include "UVAtlas.h"
+ #include "maxheap.hpp"
++#include "uvatlas_timing.h"
+ 
+ using namespace Isochart;
+ using namespace DirectX;
+@@ -244,6 +245,7 @@ HRESULT CIsochartMesh::OptimizeAllL2SquaredStretch(
+     bool bOptimizeSignal)
+ {
+     HRESULT hr = S_OK;
++    UVATLAS_TIME_SCOPE("Charts::OptimizeAllL2SquaredStretch");
+     for (size_t ii = 0; ii < chartList.size(); ii++)
+     {
+         FAILURE_RETURN(chartList[ii]->OptimizeChartL2Stretch(bOptimizeSignal));
+diff --git a/UVAtlas/isochart/meshpartitionchart.cpp b/UVAtlas/isochart/meshpartitionchart.cpp
+index f3fc53f..ca4c7d5 100644
+--- a/UVAtlas/isochart/meshpartitionchart.cpp
++++ b/UVAtlas/isochart/meshpartitionchart.cpp
+@@ -9,6 +9,8 @@
+ 
+ #include "pch.h"
+ #include "isochartmesh.h"
++#include "segmentoverlap.h"
++#include "uvatlas_timing.h"
+ 
+ using namespace Isochart;
+ using namespace DirectX;
+@@ -1186,6 +1188,8 @@ HRESULT CIsochartMesh::ProcessPlaneShape(
+ static bool IsSelfOverlapping(
+     CIsochartMesh *pChart)
+ {
++    UVATLAS_TIME_SCOPE_WORK("Overlap::IsSelfOverlapping(edges)", pChart->GetEdgeNumber());
++
+     auto &edgeList1 = pChart->GetEdgesList();
+     ISOCHARTVERTEX *pVertList1 = pChart->GetVertexBuffer();
+ 
+@@ -1194,93 +1198,89 @@ static bool IsSelfOverlapping(
+         return false;
+     }
+ 
+-    for (size_t jj = 0; jj < edgeList1.size() - 1; jj++)
+-    {
+-        ISOCHARTEDGE &edge1 = edgeList1[jj];
+-        const XMFLOAT2 &v1 = pVertList1[edge1.dwVertexID[0]].uv;
+-        const XMFLOAT2 &v2 = pVertList1[edge1.dwVertexID[1]].uv;
++    ISOCHARTFACE *pFaceList1 = pChart->GetFaceBuffer();
++    const CBaseMeshInfo &baseInfo = pChart->GetBaseMeshInfo();
+ 
+-        for (size_t kk = jj + 1; kk < edgeList1.size(); kk++)
++    return Isochart::detail::AnySegmentsIntersectFast(
++        edgeList1.size(),
++        [&](size_t i, uint32_t &vid0, uint32_t &vid1,
++            DirectX::XMFLOAT2 &p0, DirectX::XMFLOAT2 &p1)
++        {
++            const ISOCHARTEDGE &edge = edgeList1[i];
++            vid0 = edge.dwVertexID[0];
++            vid1 = edge.dwVertexID[1];
++            p0 = pVertList1[vid0].uv;
++            p1 = pVertList1[vid1].uv;
++        },
++        [&](size_t i, size_t j) -> bool
+         {
+-            ISOCHARTEDGE &edge2 = edgeList1[kk];
++            const ISOCHARTEDGE &edge1 = edgeList1[i];
++            const ISOCHARTEDGE &edge2 = edgeList1[j];
+ 
+-            // If the 2 edges are adjacent, skip checking
+-            if (edge1.dwVertexID[0] == edge2.dwVertexID[0] || edge1.dwVertexID[0] == edge2.dwVertexID[1] || edge1.dwVertexID[1] == edge2.dwVertexID[0] || edge1.dwVertexID[1] == edge2.dwVertexID[1])
++            uint32_t dwFaceRootID =
++                pFaceList1[edge1.dwFaceID[0]].dwIDInRootMesh;
++            if (IsInZeroRange2(baseInfo.pfFaceAreaArray[dwFaceRootID]))
+             {
+-                continue;
++                return false;
+             }
+-            const XMFLOAT2 &v3 = pVertList1[edge2.dwVertexID[0]].uv;
+-            const XMFLOAT2 &v4 = pVertList1[edge2.dwVertexID[1]].uv;
+-            bool bIsIntersect = IsochartIsSegmentsIntersect(v1, v2, v3, v4);
+ 
+-            if (bIsIntersect)
++            if (edge1.dwFaceID[1] != INVALID_FACE_ID)
+             {
+-                ISOCHARTFACE *pFaceList1 = pChart->GetFaceBuffer();
+-                const CBaseMeshInfo &baseInfo = pChart->GetBaseMeshInfo();
+-
+-                uint32_t dwFaceRootID =
+-                    pFaceList1[edge1.dwFaceID[0]].dwIDInRootMesh;
++                dwFaceRootID =
++                    pFaceList1[edge1.dwFaceID[1]].dwIDInRootMesh;
+                 if (IsInZeroRange2(baseInfo.pfFaceAreaArray[dwFaceRootID]))
+                 {
+-                    continue;
++                    return false;
+                 }
++            }
++            dwFaceRootID =
++                pFaceList1[edge2.dwFaceID[0]].dwIDInRootMesh;
++            if (IsInZeroRange2(baseInfo.pfFaceAreaArray[dwFaceRootID]))
++            {
++                return false;
++            }
+ 
+-                if (edge1.dwFaceID[1] != INVALID_FACE_ID)
+-                {
+-                    dwFaceRootID =
+-                        pFaceList1[edge1.dwFaceID[1]].dwIDInRootMesh;
+-                    if (IsInZeroRange2(baseInfo.pfFaceAreaArray[dwFaceRootID]))
+-                    {
+-                        continue;
+-                    }
+-                }
++            if (edge2.dwFaceID[1] != INVALID_FACE_ID)
++            {
+                 dwFaceRootID =
+-                    pFaceList1[edge2.dwFaceID[0]].dwIDInRootMesh;
++                    pFaceList1[edge2.dwFaceID[1]].dwIDInRootMesh;
+                 if (IsInZeroRange2(baseInfo.pfFaceAreaArray[dwFaceRootID]))
+                 {
+-                    continue;
+-                }
+-
+-                if (edge2.dwFaceID[1] != INVALID_FACE_ID)
+-                {
+-                    dwFaceRootID =
+-                        pFaceList1[edge2.dwFaceID[1]].dwIDInRootMesh;
+-                    if (IsInZeroRange2(baseInfo.pfFaceAreaArray[dwFaceRootID]))
+-                    {
+-                        continue;
+-                    }
++                    return false;
+                 }
++            }
+ 
+-                XMVECTOR vv1 = XMLoadFloat2(&v1);
+-                XMVECTOR vv2 = XMLoadFloat2(&v2);
+-                XMVECTOR vv3 = XMLoadFloat2(&v3);
+-                XMVECTOR vv4 = XMLoadFloat2(&v4);
++            const XMFLOAT2 &v1 = pVertList1[edge1.dwVertexID[0]].uv;
++            const XMFLOAT2 &v2 = pVertList1[edge1.dwVertexID[1]].uv;
++            const XMFLOAT2 &v3 = pVertList1[edge2.dwVertexID[0]].uv;
++            const XMFLOAT2 &v4 = pVertList1[edge2.dwVertexID[1]].uv;
+ 
+-                XMVECTOR vv5 = XMVectorSubtract(vv1, vv3);
+-                if (IsInZeroRange(XMVectorGetX(XMVector2Length(vv5))))
+-                    continue;
++            XMVECTOR vv1 = XMLoadFloat2(&v1);
++            XMVECTOR vv2 = XMLoadFloat2(&v2);
++            XMVECTOR vv3 = XMLoadFloat2(&v3);
++            XMVECTOR vv4 = XMLoadFloat2(&v4);
+ 
+-                vv5 = XMVectorSubtract(vv1, vv4);
+-                if (IsInZeroRange(XMVectorGetX(XMVector2Length(vv5))))
+-                    continue;
++            XMVECTOR vv5 = XMVectorSubtract(vv1, vv3);
++            if (IsInZeroRange(XMVectorGetX(XMVector2Length(vv5))))
++                return false;
+ 
+-                vv5 = XMVectorSubtract(vv2, vv3);
+-                if (IsInZeroRange(XMVectorGetX(XMVector2Length(vv5))))
+-                    continue;
++            vv5 = XMVectorSubtract(vv1, vv4);
++            if (IsInZeroRange(XMVectorGetX(XMVector2Length(vv5))))
++                return false;
+ 
+-                vv5 = XMVectorSubtract(vv2, vv4);
+-                if (IsInZeroRange(XMVectorGetX(XMVector2Length(vv5))))
+-                    continue;
++            vv5 = XMVectorSubtract(vv2, vv3);
++            if (IsInZeroRange(XMVectorGetX(XMVector2Length(vv5))))
++                return false;
+ 
+-                DPF(1, "(%f, %f) (%f, %f) --> (%f, %f) (%f, %f)",
+-                    double(v1.x), double(v1.y), double(v2.x), double(v2.y), double(v3.x), double(v3.y), double(v4.x), double(v4.y));
++            vv5 = XMVectorSubtract(vv2, vv4);
++            if (IsInZeroRange(XMVectorGetX(XMVector2Length(vv5))))
++                return false;
+ 
+-                return true;
+-            }
+-        }
+-    }
++            DPF(1, "(%f, %f) (%f, %f) --> (%f, %f) (%f, %f)",
++                double(v1.x), double(v1.y), double(v2.x), double(v2.y), double(v3.x), double(v3.y), double(v4.x), double(v4.y));
+ 
+-    return false;
++            return true;
++        });
+ }
+ 
+ HRESULT CIsochartMesh::ProcessPlaneLikeShape(
+@@ -1289,6 +1289,7 @@ HRESULT CIsochartMesh::ProcessPlaneLikeShape(
+     bool &bPlaneLikeShape)
+ {
+     HRESULT hr = S_OK;
++    UVATLAS_TIME_SCOPE_WORK("Chart::ProcessPlaneLikeShape", m_dwFaceNumber);
+ 
+     bPlaneLikeShape = false;
+ 
+@@ -1590,6 +1591,7 @@ HRESULT CIsochartMesh::ProcessSpecialShape(
+     size_t dwMaxEigenDimension,
+     bool &bSpecialShape)
+ {
++    UVATLAS_TIME_SCOPE_WORK("Chart::ProcessSpecialShape", m_dwFaceNumber);
+     UNREFERENCED_PARAMETER(pfVertCombineDistance);
+ 
+     HRESULT hr = S_OK;
+@@ -2083,6 +2085,7 @@ HRESULT CIsochartMesh::ProcessGeneralShape(
+     const float *pfVertMappingCoord)
+ {
+     HRESULT hr = S_OK;
++    UVATLAS_TIME_SCOPE_WORK("Chart::ProcessGeneralShape", m_dwFaceNumber);
+ 
+     assert(m_children.empty());
+ 
+@@ -2202,6 +2205,7 @@ HRESULT CIsochartMesh::CalculateRepresentiveVertices(
+     const float *pfVertMappingCoord)
+ {
+     representativeVertsIdx.clear();
++    UVATLAS_TIME_SCOPE_WORK("Chart::CalculateRepresentiveVertices", m_dwVertNumber);
+ #ifdef BIPARTITION
+     for (size_t dwDimIndex = 0;
+         dwDimIndex < dwPrimaryEigenDimension;
+@@ -2423,6 +2427,7 @@ HRESULT CIsochartMesh::PartitionGeneralShape(
+ {
+     DPF(3, "Partition General shape...\n");
+     bIsPartitionSucceed = false;
++    UVATLAS_TIME_SCOPE_WORK("Chart::PartitionGeneralShape", m_dwFaceNumber);
+ 
+     // Only one representative vertex, no need to cluster vertices.
+     if (representativeVertsIdx.size() < 2)
+diff --git a/UVAtlas/isochart/packingcharts.cpp b/UVAtlas/isochart/packingcharts.cpp
+index bbcf917..9867a46 100644
+--- a/UVAtlas/isochart/packingcharts.cpp
++++ b/UVAtlas/isochart/packingcharts.cpp
+@@ -66,6 +66,7 @@
+ #include "pch.h"
+ #include "isochartmesh.h"
+ #include "maxheap.hpp"
++#include "uvatlas_timing.h"
+ 
+ // VECTOR field selector
+ // v can be a XMFLOAT2 or XMFLOAT3 variable
+@@ -2157,6 +2158,7 @@ HRESULT CIsochartMesh::PackingCharts(
+     CCallbackSchemer &callbackSchemer)
+ {
+     HRESULT hr = S_OK;
++    UVATLAS_TIME_SCOPE_WORK("Packing::PackingCharts", chartList.size());
+ 
+ #ifdef _DEBUG
+     BruteForceFoldChecking(chartList);
+@@ -2472,6 +2474,7 @@ namespace
+ void CIsochartMesh::SortCharts(
+     ISOCHARTMESH_ARRAY &chartList)
+ {
++    UVATLAS_TIME_SCOPE_WORK("Packing::SortCharts", chartList.size());
+     std::sort(chartList.begin(), chartList.end(), CompareChart);
+ }
+ 
+@@ -2482,6 +2485,7 @@ HRESULT CIsochartMesh::PackingOneChart(
+     size_t dwIteration)
+ {
+     HRESULT hr = S_OK;
++    UVATLAS_TIME_SCOPE_WORK("Packing::PackingOneChart", pChart->GetFaceNumber());
+ 
+     auto pPackingInfo = pChart->GetPackingInfoBuffer();
+ 
+diff --git a/UVAtlas/isochart/progressivemesh.cpp b/UVAtlas/isochart/progressivemesh.cpp
+index 736f05f..143ec08 100644
+--- a/UVAtlas/isochart/progressivemesh.cpp
++++ b/UVAtlas/isochart/progressivemesh.cpp
+@@ -13,6 +13,7 @@
+ 
+ #include "pch.h"
+ #include "progressivemesh.h"
++#include "uvatlas_timing.h"
+ 
+ #define DOUBLE_OP(x, y, op) static_cast<double>(x) op static_cast<double>(y)
+ 
+@@ -103,6 +104,7 @@ void CProgressiveMesh::Clear()
+ HRESULT CProgressiveMesh::Initialize(CIsochartMesh &mesh)
+ {
+     HRESULT hr = S_OK;
++    UVATLAS_TIME_SCOPE_WORK("PM::Initialize", mesh.GetFaceNumber());
+     Clear();
+ 
+     m_dwVertNumber = static_cast<uint32_t>(mesh.GetVertexNumber());
+@@ -147,6 +149,7 @@ HRESULT CProgressiveMesh::Initialize(CIsochartMesh &mesh)
+ // See more detail in : [GH97]
+ HRESULT CProgressiveMesh::Simplify()
+ {
++    UVATLAS_TIME_SCOPE_WORK("PM::Simplify", m_dwVertNumber);
+     uint32_t dwMinVertNumber = MIN_PM_VERT_NUMBER;
+     float fMaxError = MAX_PM_ERROR;
+ 
+diff --git a/UVAtlas/isochart/segmentoverlap.h b/UVAtlas/isochart/segmentoverlap.h
+new file mode 100644
+index 0000000..b2ab22d
+--- /dev/null
++++ b/UVAtlas/isochart/segmentoverlap.h
+@@ -0,0 +1,216 @@
++//--------------------------------------------------------------------------------------
++// UVAtlas - segmentoverlap.h
++//
++// Local performance patch: spatial-hash accelerated pairwise 2D segment intersection.
++// Replaces the original O(E^2) brute-force loops in IsSelfOverlapping() and
++// CIsochartMesh::IsParameterizationOverlapping() with an equivalent near-linear test.
++//--------------------------------------------------------------------------------------
++
++#pragma once
++
++#include <algorithm>
++#include <cfloat>
++#include <cmath>
++#include <cstdint>
++#include <unordered_map>
++#include <vector>
++
++#include "isochartutil.h"
++
++namespace Isochart
++{
++    namespace detail
++    {
++        struct SegmentBox
++        {
++            uint32_t vid0;
++            uint32_t vid1;
++            DirectX::XMFLOAT2 p0;
++            DirectX::XMFLOAT2 p1;
++            float minX;
++            float minY;
++            float maxX;
++            float maxY;
++        };
++
++        inline bool SegmentBoxesCanIntersect(const SegmentBox &a, const SegmentBox &b)
++        {
++            if (a.maxX < b.minX || b.maxX < a.minX || a.maxY < b.minY || b.maxY < a.minY)
++            {
++                return false;
++            }
++            if (a.vid0 == b.vid0 || a.vid0 == b.vid1 || a.vid1 == b.vid0 || a.vid1 == b.vid1)
++            {
++                return false;
++            }
++            return IsochartIsSegmentsIntersect(a.p0, a.p1, b.p0, b.p1);
++        }
++
++        // Tests all unordered pairs (i, j), i < j, of 2D segments.
++        //   fetchEdge(i, &vid0, &vid1, &p0, &p1) fills segment i's vertex ids and endpoints.
++        //   reportPair(i, j) decides whether an intersecting, non-adjacent pair counts.
++        // Returns true on the first pair that intersects and passes reportPair.
++        template <typename FetchEdge, typename ReportPair>
++        bool AnySegmentsIntersectFast(
++            size_t segmentCount,
++            FetchEdge fetchEdge,
++            ReportPair reportPair)
++        {
++            if (segmentCount < 2)
++            {
++                return false;
++            }
++
++            std::vector<SegmentBox> boxes(segmentCount);
++            float globalMinX = FLT_MAX;
++            float globalMinY = FLT_MAX;
++            float globalMaxX = -FLT_MAX;
++            float globalMaxY = -FLT_MAX;
++            double lengthSum = 0.0;
++            float maxAbsCoord = 0.0f;
++            bool allFinite = true;
++
++            for (size_t i = 0; i < segmentCount; i++)
++            {
++                SegmentBox &box = boxes[i];
++                fetchEdge(i, box.vid0, box.vid1, box.p0, box.p1);
++
++                const float coords[4] = { box.p0.x, box.p0.y, box.p1.x, box.p1.y };
++                for (float c : coords)
++                {
++                    if (!std::isfinite(c))
++                    {
++                        allFinite = false;
++                    }
++                    maxAbsCoord = std::max(maxAbsCoord, std::fabs(c));
++                }
++
++                box.minX = std::min(box.p0.x, box.p1.x);
++                box.maxX = std::max(box.p0.x, box.p1.x);
++                box.minY = std::min(box.p0.y, box.p1.y);
++                box.maxY = std::max(box.p0.y, box.p1.y);
++                globalMinX = std::min(globalMinX, box.minX);
++                globalMinY = std::min(globalMinY, box.minY);
++                globalMaxX = std::max(globalMaxX, box.maxX);
++                globalMaxY = std::max(globalMaxY, box.maxY);
++                const double dx = double(box.p1.x) - double(box.p0.x);
++                const double dy = double(box.p1.y) - double(box.p0.y);
++                lengthSum += std::sqrt(dx * dx + dy * dy);
++            }
++
++            const auto bruteForce = [&]() -> bool
++            {
++                for (size_t i = 0; i + 1 < segmentCount; i++)
++                {
++                    for (size_t j = i + 1; j < segmentCount; j++)
++                    {
++                        if (SegmentBoxesCanIntersect(boxes[i], boxes[j]) && reportPair(i, j))
++                        {
++                            return true;
++                        }
++                    }
++                }
++                return false;
++            };
++
++            if (!allFinite)
++            {
++                // Preserve original behavior for pathological input.
++                return bruteForce();
++            }
++
++            // Expand boxes slightly so the epsilon tolerance used by
++            // IsochartIsSegmentsIntersect cannot report a hit for boxes that the
++            // grid separated.
++            const float expand = std::max(ISOCHART_ZERO_EPS * (2.0f + maxAbsCoord), 1e-30f);
++            const float extentX = std::max(globalMaxX - globalMinX, expand);
++            const float extentY = std::max(globalMaxY - globalMinY, expand);
++
++            float cell = static_cast<float>(lengthSum / static_cast<double>(segmentCount));
++            cell = std::max(cell, expand);
++            cell = std::max(cell, std::max(extentX, extentY) / 65536.0f);
++            if (!(cell > 0.0f) || !std::isfinite(cell))
++            {
++                cell = std::max(std::max(extentX, extentY), 1.0f);
++            }
++
++            const auto cellIndex = [&](float value, float origin) -> int32_t
++            {
++                const float scaled = (value - origin) / cell;
++                const int64_t index = static_cast<int64_t>(std::floor(scaled));
++                return static_cast<int32_t>(std::min<int64_t>(std::max<int64_t>(index, 0), 65535));
++            };
++
++            std::unordered_map<uint64_t, std::vector<uint32_t>> grid;
++            grid.reserve(segmentCount * 2);
++            const size_t maxInsertions = 64 * segmentCount + 4096;
++            size_t insertions = 0;
++            bool overflowed = false;
++            for (size_t i = 0; i < segmentCount; i++)
++            {
++                const SegmentBox &box = boxes[i];
++                const int32_t x0 = cellIndex(box.minX - expand, globalMinX);
++                const int32_t x1 = cellIndex(box.maxX + expand, globalMinX);
++                const int32_t y0 = cellIndex(box.minY - expand, globalMinY);
++                const int32_t y1 = cellIndex(box.maxY + expand, globalMinY);
++                for (int32_t y = y0; y <= y1; y++)
++                {
++                    for (int32_t x = x0; x <= x1; x++)
++                    {
++                        const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(y)) << 32) |
++                            static_cast<uint64_t>(static_cast<uint32_t>(x));
++                        grid[key].push_back(static_cast<uint32_t>(i));
++                        if (++insertions > maxInsertions)
++                        {
++                            overflowed = true;
++                        }
++                    }
++                }
++            }
++
++            if (overflowed)
++            {
++                // Degenerate distribution; keep correctness with the original
++                // quadratic scan rather than growing the grid unboundedly.
++                return bruteForce();
++            }
++
++            std::vector<uint32_t> stamp(segmentCount, 0xffffffffu);
++            for (size_t i = 0; i < segmentCount; i++)
++            {
++                const SegmentBox &box = boxes[i];
++                const int32_t x0 = cellIndex(box.minX - expand, globalMinX);
++                const int32_t x1 = cellIndex(box.maxX + expand, globalMinX);
++                const int32_t y0 = cellIndex(box.minY - expand, globalMinY);
++                const int32_t y1 = cellIndex(box.maxY + expand, globalMinY);
++                for (int32_t y = y0; y <= y1; y++)
++                {
++                    for (int32_t x = x0; x <= x1; x++)
++                    {
++                        const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(y)) << 32) |
++                            static_cast<uint64_t>(static_cast<uint32_t>(x));
++                        const auto it = grid.find(key);
++                        if (it == grid.end())
++                        {
++                            continue;
++                        }
++                        for (uint32_t j : it->second)
++                        {
++                            if (j <= i || stamp[j] == static_cast<uint32_t>(i))
++                            {
++                                continue;
++                            }
++                            stamp[j] = static_cast<uint32_t>(i);
++                            if (SegmentBoxesCanIntersect(box, boxes[j]) && reportPair(i, j))
++                            {
++                                return true;
++                            }
++                        }
++                    }
++                }
++            }
++
++            return false;
++        }
++    }
++}
+diff --git a/UVAtlas/isochart/uvatlas_timing.h b/UVAtlas/isochart/uvatlas_timing.h
+new file mode 100644
+index 0000000..e7e98d3
+--- /dev/null
++++ b/UVAtlas/isochart/uvatlas_timing.h
+@@ -0,0 +1,67 @@
++//--------------------------------------------------------------------------------------
++// UVAtlas - uvatlas_timing.h
++//
++// Optional, local-only phase timing instrumentation used to profile UVAtlas.
++// Enable by defining UVATLAS_ENABLE_TIMING when building the library.
++//--------------------------------------------------------------------------------------
++
++#pragma once
++
++#if defined(UVATLAS_ENABLE_TIMING)
++
++#include <chrono>
++#include <atomic>
++#include <cstdint>
++#include <cstdio>
++
++namespace uvatlas_timing
++{
++    inline int& indent()
++    {
++        static int value = 0;
++        return value;
++    }
++
++    struct ScopeTimer
++    {
++        const char* label;
++        uint64_t work;
++        std::chrono::steady_clock::time_point start;
++
++        explicit ScopeTimer(const char* label_, uint64_t work_ = 0) noexcept
++            : label(label_), work(work_), start(std::chrono::steady_clock::now())
++        {
++            ++indent();
++            std::fprintf(stderr, "[uvatlas] %*s>>> %-42s (work=%llu) begin\n",
++                (indent() - 1) * 2, "", label,
++                static_cast<unsigned long long>(work_));
++        }
++
++        ~ScopeTimer()
++        {
++            const auto end = std::chrono::steady_clock::now();
++            const double ms = std::chrono::duration<double, std::milli>(end - start).count();
++            const int level = --indent();
++            std::fprintf(stderr, "[uvatlas] %*s%-44s %10.2f ms", level * 2, "", label, ms);
++            if (work != 0)
++            {
++                std::fprintf(stderr, "  (work=%llu, %.3f us/unit)",
++                    static_cast<unsigned long long>(work),
++                    work ? (ms * 1000.0 / static_cast<double>(work)) : 0.0);
++            }
++            std::fprintf(stderr, "\n");
++        }
++    };
++}
++
++#define UVATLAS_CONCAT_IMPL(a, b) a##b
++#define UVATLAS_CONCAT(a, b) UVATLAS_CONCAT_IMPL(a, b)
++#define UVATLAS_TIME_SCOPE(label) \
++    const uvatlas_timing::ScopeTimer UVATLAS_CONCAT(_uvas_scope_timer_, __LINE__) (label)
++#define UVATLAS_TIME_SCOPE_WORK(label, work) \
++    const uvatlas_timing::ScopeTimer UVATLAS_CONCAT(_uvas_scope_timer_, __LINE__) (label, static_cast<uint64_t>(work))
++
++#else
++#define UVATLAS_TIME_SCOPE(label) ((void)0)
++#define UVATLAS_TIME_SCOPE_WORK(label, work) ((void)0)
++#endif
