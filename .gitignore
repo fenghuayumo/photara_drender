@@ -80,9 +80,3 @@ logs/
 __pycache__/
 *.py[cod]
 
-# ---------------------------------------------------------------
-# Local third-party checkout: CMake fetches the pinned UVAtlas
-# release itself (see PHOTARA_FETCH_UVATLAS in CMakeLists.txt).
-# Only needed next to third_party/uvbench/ for manual benchmarking.
-# ---------------------------------------------------------------
-/third_party/UVAtlas/

@@ -45,7 +45,8 @@ cmake --build build_cgal --config Release
 The Python API locates the installed `photara_drender/tools/photara_mesh_preprocessor.exe`, an explicit
 `cgal_executable`, or `PHOTARA_MESH_PREPROCESSOR`.
 
-The fetched UVAtlas oct2025 release has an OpenMP region in chart parameterization. Photara leaves
+The UVAtlas submodule (`third_party/UVAtlas`, fenghuayumo/UVAtlas) is the default unwrap backend. The fetched
+oct2025 release, used only when `PHOTARA_USE_VENDORED_UVATLAS=OFF`, has an OpenMP region in chart parameterization. Photara leaves
 `PHOTARA_UVATLAS_USE_OPENMP` off, because that region oversubscribes the CPU when several PCA partitions run at once.
 The vendored checkout charts independent pieces on its own thread queue. `worker_count` is a thread budget: a single
 `UVAtlasCreate` spends it on that queue, and several PCA partitions share it between the partitions and each

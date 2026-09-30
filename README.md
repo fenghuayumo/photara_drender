@@ -19,18 +19,23 @@
 
 ## 构建
 
-需要 CMake 3.24+、C++20 编译器、Vulkan SDK 1.2+ 和 DXC。Windows 默认下载并静态链接固定版本的
-Microsoft UVAtlas；也可以使用系统安装包或关闭该后端。
+需要 CMake 3.24+、C++20 编译器、Vulkan SDK 1.2+ 和 DXC。展 UV 默认编译 submodule
+`third_party/UVAtlas`（<https://github.com/fenghuayumo/UVAtlas>）。克隆时带上子模块：
 
 ```powershell
+git clone --recurse-submodules https://github.com/fenghuayumo/photara_drender.git
 cmake -S . -B build -DPHOTARA_BUILD_PYTHON_BINDINGS=ON -DPHOTARA_BUILD_NATIVE_TESTS=ON
 cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
+已有工作区用 `git submodule update --init third_party/UVAtlas` 补上。`PHOTARA_USE_VENDORED_UVATLAS=OFF`
+时改回系统安装包，或在 Windows 上下载微软 `oct2025` 源码包。
+
 相关选项：
 
 - `PHOTARA_ENABLE_UVATLAS=OFF`：只构建渲染和投影模块；
+- `PHOTARA_USE_VENDORED_UVATLAS=OFF`：不用 submodule，改走系统包或 `PHOTARA_FETCH_UVATLAS`；
 - `PHOTARA_FETCH_UVATLAS=OFF`：要求环境中存在 `uvatlas` CMake package；
 - `PHOTARA_UVATLAS_USE_OPENMP=ON`：启用 UVAtlas 上游的 OpenMP chart 参数化；
 - `PHOTARA_BUILD_MESH_TOOLS=ON`：构建使用 CGAL 的流形修复与 Decimation 工具；

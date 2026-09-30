@@ -1,9 +1,9 @@
 # Local UVAtlas patch
 
 `uvatlas-perf.patch` carries the local Microsoft UVAtlas changes that make atlas generation
-usable on large scan meshes. It is applied to the checkout that `third_party/uvbench` (and
-`photara_drender` built with `-DPHOTARA_USE_VENDORED_UVATLAS=ON`) links against; the pinned
-`oct2025` release used by a default build does not contain them.
+usable on large scan meshes. The product links the `third_party/UVAtlas` submodule
+(`fenghuayumo/UVAtlas` `main`) by default. This patch is the same work applied onto a pristine
+`oct2025` tree for `third_party/uvbench` or a build with `-DPHOTARA_USE_VENDORED_UVATLAS=OFF`.
 
 Base: `microsoft/UVAtlas`, tag `oct2025` (verified — the patch applies cleanly to a pristine
 `oct2025` tree and the library builds from the result with `UVATLAS_ENABLE_TIMING=OFF`).

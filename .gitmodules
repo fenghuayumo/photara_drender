@@ -1,0 +1,4 @@
+[submodule "third_party/UVAtlas"]
+	path = third_party/UVAtlas
+	url = https://github.com/fenghuayumo/UVAtlas.git
+	branch = main
