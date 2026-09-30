@@ -317,26 +317,6 @@ VkDeviceAddress Buffer::device_address() const {
     return vkGetBufferDeviceAddress(device, &address_info);
 }
 
-AccelerationStructure::~AccelerationStructure() {
-    if (device != VK_NULL_HANDLE && handle != VK_NULL_HANDLE && destroy_function != nullptr) {
-        destroy_function(device, handle, nullptr);
-    }
-}
-
-AccelerationStructure::AccelerationStructure(AccelerationStructure&& other) noexcept {
-    *this = std::move(other);
-}
-
-AccelerationStructure& AccelerationStructure::operator=(AccelerationStructure&& other) noexcept {
-    if (this != &other) {
-        std::swap(device, other.device);
-        std::swap(handle, other.handle);
-        std::swap(destroy_function, other.destroy_function);
-        std::swap(storage, other.storage);
-    }
-    return *this;
-}
-
 ComputePipeline::ComputePipeline(
     VkDevice logical_device,
     std::span<const std::byte> spir_v_bytes,
@@ -544,11 +524,22 @@ Context::Impl::Impl(const ContextOptions& options) {
     pool_info.poolSizeCount = static_cast<std::uint32_t>(pool_sizes.size());
     pool_info.pPoolSizes = pool_sizes.data();
     check_vk(vkCreateDescriptorPool(device, &pool_info, nullptr, &descriptor_pool), "vkCreateDescriptorPool");
+
+    photara::vk::ExternalDevice external;
+    external.instance = instance;
+    external.physical = physical_device;
+    external.device = device;
+    external.queue = queue;
+    external.queue_family = queue_family_index;
+    external.enabled.ray_query = device_info.supports_ray_query;
+    external.enabled.buffer_device_address = device_info.supports_ray_query;
+    runtime = photara::vk::Device::adopt(external);
 }
 
 Context::Impl::~Impl() {
     if (device != VK_NULL_HANDLE) {
         vkDeviceWaitIdle(device);
+        runtime = {};
         vkDestroyDescriptorPool(device, descriptor_pool, nullptr);
         vkDestroyCommandPool(device, command_pool, nullptr);
         vkDestroyDevice(device, nullptr);
@@ -597,132 +588,9 @@ ComputePipeline Context::Impl::create_pipeline(
 RayQueryScene Context::Impl::create_ray_query_scene(
     std::span<const float> positions,
     std::span<const std::uint32_t> triangle_indices) const {
-    if (!device_info.supports_ray_query) {
-        throw std::runtime_error("The selected Vulkan device does not support ray queries");
-    }
-    if (positions.empty() || positions.size() % 3 != 0 || triangle_indices.empty() || triangle_indices.size() % 3 != 0) {
-        throw std::invalid_argument("Ray-query geometry must contain float3 positions and triangle indices");
-    }
     const std::scoped_lock lock(dispatch_mutex);
-    const auto create_acceleration_structure = reinterpret_cast<PFN_vkCreateAccelerationStructureKHR>(
-        vkGetDeviceProcAddr(device, "vkCreateAccelerationStructureKHR"));
-    const auto destroy_acceleration_structure = reinterpret_cast<PFN_vkDestroyAccelerationStructureKHR>(
-        vkGetDeviceProcAddr(device, "vkDestroyAccelerationStructureKHR"));
-    const auto get_build_sizes = reinterpret_cast<PFN_vkGetAccelerationStructureBuildSizesKHR>(
-        vkGetDeviceProcAddr(device, "vkGetAccelerationStructureBuildSizesKHR"));
-    const auto command_build = reinterpret_cast<PFN_vkCmdBuildAccelerationStructuresKHR>(
-        vkGetDeviceProcAddr(device, "vkCmdBuildAccelerationStructuresKHR"));
-    const auto get_acceleration_address = reinterpret_cast<PFN_vkGetAccelerationStructureDeviceAddressKHR>(
-        vkGetDeviceProcAddr(device, "vkGetAccelerationStructureDeviceAddressKHR"));
-    if (create_acceleration_structure == nullptr || destroy_acceleration_structure == nullptr ||
-        get_build_sizes == nullptr || command_build == nullptr || get_acceleration_address == nullptr) {
-        throw std::runtime_error("Required Vulkan acceleration-structure entry points are unavailable");
-    }
-
     RayQueryScene scene;
-    const auto input_usage = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
-                             VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-    scene.vertices = create_buffer(positions.size_bytes(), input_usage);
-    scene.indices = create_buffer(triangle_indices.size_bytes(), input_usage);
-    scene.vertices.upload(positions.data(), positions.size_bytes());
-    scene.indices.upload(triangle_indices.data(), triangle_indices.size_bytes());
-
-    auto build_structure = [&](VkAccelerationStructureTypeKHR type,
-                               const VkAccelerationStructureGeometryKHR& geometry,
-                               std::uint32_t primitive_count) {
-        VkAccelerationStructureBuildGeometryInfoKHR build_info{
-            VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
-        build_info.type = type;
-        build_info.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-        build_info.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-        build_info.geometryCount = 1;
-        build_info.pGeometries = &geometry;
-        VkAccelerationStructureBuildSizesInfoKHR sizes{
-            VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
-        get_build_sizes(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &build_info, &primitive_count, &sizes);
-
-        AccelerationStructure structure;
-        structure.device = device;
-        structure.destroy_function = destroy_acceleration_structure;
-        structure.storage = create_buffer(
-            sizes.accelerationStructureSize,
-            VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-        VkAccelerationStructureCreateInfoKHR create_info{
-            VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
-        create_info.buffer = structure.storage.handle;
-        create_info.size = sizes.accelerationStructureSize;
-        create_info.type = type;
-        check_vk(create_acceleration_structure(device, &create_info, nullptr, &structure.handle),
-                 "vkCreateAccelerationStructureKHR");
-
-        auto scratch = create_buffer(
-            sizes.buildScratchSize,
-            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-        build_info.dstAccelerationStructure = structure.handle;
-        build_info.scratchData.deviceAddress = scratch.device_address();
-        VkAccelerationStructureBuildRangeInfoKHR range{};
-        range.primitiveCount = primitive_count;
-        const VkAccelerationStructureBuildRangeInfoKHR* ranges[] = {&range};
-
-        VkCommandBufferAllocateInfo command_buffer_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-        command_buffer_info.commandPool = command_pool;
-        command_buffer_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        command_buffer_info.commandBufferCount = 1;
-        VkCommandBuffer command_buffer = VK_NULL_HANDLE;
-        check_vk(vkAllocateCommandBuffers(device, &command_buffer_info, &command_buffer), "vkAllocateCommandBuffers");
-        VkCommandBufferBeginInfo begin_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        check_vk(vkBeginCommandBuffer(command_buffer, &begin_info), "vkBeginCommandBuffer");
-        command_build(command_buffer, 1, &build_info, ranges);
-        check_vk(vkEndCommandBuffer(command_buffer), "vkEndCommandBuffer");
-        VkSubmitInfo submit_info{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-        submit_info.commandBufferCount = 1;
-        submit_info.pCommandBuffers = &command_buffer;
-        check_vk(vkQueueSubmit(queue, 1, &submit_info, VK_NULL_HANDLE), "vkQueueSubmit");
-        check_vk(vkQueueWaitIdle(queue), "vkQueueWaitIdle");
-        vkFreeCommandBuffers(device, command_pool, 1, &command_buffer);
-        return structure;
-    };
-
-    VkAccelerationStructureGeometryTrianglesDataKHR triangle_data{
-        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR};
-    triangle_data.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-    triangle_data.vertexData.deviceAddress = scene.vertices.device_address();
-    triangle_data.vertexStride = sizeof(float) * 3;
-    triangle_data.maxVertex = static_cast<std::uint32_t>(positions.size() / 3 - 1);
-    triangle_data.indexType = VK_INDEX_TYPE_UINT32;
-    triangle_data.indexData.deviceAddress = scene.indices.device_address();
-    VkAccelerationStructureGeometryKHR bottom_geometry{
-        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
-    bottom_geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-    bottom_geometry.geometry.triangles = triangle_data;
-    bottom_geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
-    scene.bottom_level = build_structure(
-        VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-        bottom_geometry,
-        static_cast<std::uint32_t>(triangle_indices.size() / 3));
-
-    VkAccelerationStructureDeviceAddressInfoKHR address_info{
-        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR};
-    address_info.accelerationStructure = scene.bottom_level.handle;
-    VkAccelerationStructureInstanceKHR geometry_instance{};
-    geometry_instance.transform.matrix[0][0] = 1.0F;
-    geometry_instance.transform.matrix[1][1] = 1.0F;
-    geometry_instance.transform.matrix[2][2] = 1.0F;
-    geometry_instance.mask = 0xff;
-    geometry_instance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-    geometry_instance.accelerationStructureReference = get_acceleration_address(device, &address_info);
-    auto instance_buffer = create_buffer(sizeof(geometry_instance), input_usage);
-    instance_buffer.upload(&geometry_instance, sizeof(geometry_instance));
-    VkAccelerationStructureGeometryInstancesDataKHR instance_data{
-        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR};
-    instance_data.arrayOfPointers = VK_FALSE;
-    instance_data.data.deviceAddress = instance_buffer.device_address();
-    VkAccelerationStructureGeometryKHR top_geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
-    top_geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
-    top_geometry.geometry.instances = instance_data;
-    top_geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
-    scene.top_level = build_structure(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, top_geometry, 1);
+    scene.triangles = runtime.create_triangle_scene(positions, triangle_indices);
     return scene;
 }
 
@@ -801,13 +669,13 @@ void Context::Impl::dispatch_ray_query(
     const Buffer& positions,
     const Buffer& normals,
     const Buffer& raster,
-    const AccelerationStructure& scene,
+    VkAccelerationStructureKHR scene,
     const Buffer& visibility,
     const void* push_constants,
     std::uint32_t push_constant_size,
     std::uint32_t group_count_x) const {
     const std::scoped_lock lock(dispatch_mutex);
-    if (!device_info.supports_ray_query || pipeline.binding_count != 5 || scene.handle == VK_NULL_HANDLE) {
+    if (!device_info.supports_ray_query || pipeline.binding_count != 5 || scene == VK_NULL_HANDLE) {
         throw std::runtime_error("Invalid ray-query dispatch state");
     }
     VkDescriptorSetAllocateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
@@ -835,7 +703,7 @@ void Context::Impl::dispatch_ray_query(
     VkWriteDescriptorSetAccelerationStructureKHR acceleration_write{
         VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
     acceleration_write.accelerationStructureCount = 1;
-    acceleration_write.pAccelerationStructures = &scene.handle;
+    acceleration_write.pAccelerationStructures = &scene;
     writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[3].pNext = &acceleration_write;
     writes[3].dstSet = descriptor_set;
