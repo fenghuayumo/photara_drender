@@ -111,10 +111,13 @@ struct UvAtlasOptions {
     float max_stretch = 1.0F / 6.0F;
     float gutter = 1.0F;
     std::optional<bool> quality = std::nullopt;
-    // 0 selects the partition count automatically (multiple partitions for large meshes,
-    // a single UVAtlasCreate call for small ones). Set 1 to force the single-chart path
-    // or N > 1 to force that many PCA partitions.
+    // 0 selects the partition count automatically: large meshes request four PCA
+    // partitions, small meshes use a single UVAtlasCreate call. Set 1 to force the
+    // single-chart path or N > 1 to force that many PCA partitions.
     std::uint32_t parallel_partitions = 0;
+    // 0 uses the machine's hardware concurrency. This budget is shared by the
+    // partition threads and, inside each partition, the engine chart queue.
+    // A single UVAtlasCreate spends the whole budget on that queue.
     std::uint32_t worker_count = 0;
 };
 

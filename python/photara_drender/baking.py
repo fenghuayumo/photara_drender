@@ -106,9 +106,9 @@ def unwrap_mesh_uv(
 ) -> UnwrappedMesh:
     """Unwrap a mesh; quality selects UVAtlas quality/fast mode, and None lets UVAtlas choose.
 
-    ``parallel_partitions=0`` picks the partition count automatically: large meshes are
-    split into PCA partitions (much faster, still within the stretch budget), small meshes
-    stay on a single UVAtlasCreate call. Pass 1 to force the single call.
+    ``parallel_partitions=0`` picks the partition count automatically: large meshes
+    request four PCA partitions, small meshes stay on a single UVAtlasCreate call.
+    Pass 1 to force the single call.
     """
 
     positions = np.ascontiguousarray(positions, dtype=np.float32)

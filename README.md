@@ -81,7 +81,7 @@ CGAL 流形修复、保边界 Decimation 和并行 UVAtlas，不再经中间 PLY
 ```python
 prepared = prepare_mesh_for_baking(
     "mesh.ply",
-    options=MeshPreparationOptions(quality="high", atlas_parallel_partitions=4),
+    options=MeshPreparationOptions(quality="high"),
 )
 projection = load_colmap_projection(
     "sparse/0",

@@ -96,7 +96,7 @@ class MeshPreparationOptions:
     atlas_gutter: float = 1.0
     atlas_max_stretch: float = 1.0 / 6.0
     atlas_quality: Optional[bool] = None
-    atlas_parallel_partitions: int = 4
+    atlas_parallel_partitions: int = 0
     atlas_worker_count: int = 0
 
 

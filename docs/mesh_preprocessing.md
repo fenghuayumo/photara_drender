@@ -45,9 +45,11 @@ cmake --build build_cgal --config Release
 The Python API locates the installed `photara_drender/tools/photara_mesh_preprocessor.exe`, an explicit
 `cgal_executable`, or `PHOTARA_MESH_PREPROCESSOR`.
 
-UVAtlas oct2025 contains an internal OpenMP region in chart parameterization. It is disabled by default because it
-oversubscribes the CPU when several PCA partitions are charted concurrently. Enable `PHOTARA_UVATLAS_USE_OPENMP` only
-for builds that use `parallel_partitions=1`.
+The fetched UVAtlas oct2025 release has an OpenMP region in chart parameterization. Photara leaves
+`PHOTARA_UVATLAS_USE_OPENMP` off, because that region oversubscribes the CPU when several PCA partitions run at once.
+The vendored checkout charts independent pieces on its own thread queue. `worker_count` is a thread budget: a single
+`UVAtlasCreate` spends it on that queue, and several PCA partitions share it between the partitions and each
+partition's queue.
 
 The preparation defaults mirror Open3D's UVAtlas parameters: `gutter=1`, `max_stretch=1/6`, and
 `quality=None`, which passes `UVATLAS_DEFAULT` and lets UVAtlas select its geodesic mode. Pipelines that require the
@@ -61,12 +63,11 @@ regular retopology is preferred.
 
 `atlas_parallel_partitions` enables the Open3D-style path: face centroids are recursively PCA-partitioned, each
 partition is charted concurrently with `UVAtlasPartition`, and all charts are packed together once with
-`UVAtlasPack`. Mesh preparation defaults to four partitions, and direct `unwrap_uv()` calls default to
-`parallel_partitions=0`, which selects automatically: several partitions for meshes above 100k faces and a single
-`UVAtlasCreate` call below that. The single-call path collapses the chart's boundary loops itself and rebuilds the
-full chart connectivity for every cut, which grows quadratically with mesh size, so large scan meshes should stay on
-the partitioned path. Pass `parallel_partitions=1` to force the single call. Parallel partitioning is faster on large
-meshes but may introduce additional island boundaries.
+`UVAtlasPack`. Mesh preparation and `unwrap_uv()` both default to `parallel_partitions=0`. Meshes under 100k faces
+use one `UVAtlasCreate`. Larger meshes request four PCA partitions, which is the split that kept the sample scans
+near 600-700 charts. Spare CPU threads parameterize charts inside each partition and do not open extra islands.
+Pass `parallel_partitions=1` to force the single call, or a larger value when a faster unwrap is worth more seams.
+Parallel partitioning may introduce additional island boundaries.
 
 ### Choosing `atlas_parallel_partitions`
 
@@ -79,16 +80,20 @@ Measured with `tests/benchmark_uv_atlas.py` on the two sample scan meshes (1024Â
 
 | requested | `mesh.ply` 886k v / 1.76M f | `images_mesh.obj` 377k v / 748k f |
 | --- | --- | --- |
-| 1 (single `UVAtlasCreate`) | 2498 s / 617 charts | 650 s / 580 charts |
+| 1 (single `UVAtlasCreate`) | 541 s / 592 charts | 138 s / 577 charts |
 | 2 | 362 s / 575 charts | 176 s / 601 charts |
-| 4 (auto default) | 183 s / 643 charts | 38 s / 603 charts |
+| 4 (automatic on large meshes) | 58 s / 690 charts | 15 s / 615 charts |
 | 8 | 45 s / 723 charts | 15 s / 643 charts |
 | 16 | 24 s / 931 charts | 10 s / 688 charts |
 
-Every configuration meets the stretch budget; the price of more partitions is more chart islands (extra seams and a
-few percent more duplicated vertices). Aim for roughly 50k-200k faces per partition, that is
-`parallel_partitions â‰ˆ 1 + vertex_count / 150000`, which lands on 8 for the meshes above. Cap the charting threads
-with `worker_count` when the machine is shared, because every concurrent partition holds its own copy of the mesh.
+Every configuration meets the stretch budget. The single-call row was remeasured on a Ryzen 9 7950X after the vendored
+UVAtlas batched boundary cuts and chart queue (`perf/instrument-phases`, `db13adb`). `mesh.ply` finished in 541 s with
+max stretch 0.1656; the obj finished in 138 s with max stretch 0.1662. That obj run drops 4 duplicate faces and 5 non-manifold
+faces (747609 to 747600) so the mesh can enter `unwrap_uv`. The raw obj is still rejected. The automatic
+row requests 4 partitions and finishes as 8 partitions in 58 s for `mesh.ply` (690 charts, stretch 0.16645) and 9
+partitions in 15 s for the obj (615 charts, stretch 0.16643). A finer automatic split reached 14 s and 8 s, at
+960 and 622 charts. Rows 2, 8, and 16 are the earlier partitioned measurements. More partitions add chart islands.
+`worker_count` is the shared thread budget. Every concurrent partition holds its own copy of the mesh.
 
 COLMAP support currently accepts undistorted `PINHOLE` and `SIMPLE_PINHOLE` text models. Other camera models must first
 be undistorted by COLMAP. `load_colmap_projection()` converts COLMAP world-to-camera poses into row-major clip matrices,

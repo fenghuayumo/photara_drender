@@ -203,6 +203,6 @@ PYBIND11_MODULE(_photara_mesh, module) {
         py::arg("gutter") = 1.0F,
         py::arg("max_stretch") = 1.0F / 6.0F,
         py::arg("quality") = py::none(),
-        py::arg("parallel_partitions") = 4,
+        py::arg("parallel_partitions") = 0,
         py::arg("worker_count") = 0);
 }

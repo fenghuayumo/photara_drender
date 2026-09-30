@@ -723,7 +723,7 @@ PYBIND11_MODULE(_photara_drender, module) {
         py::arg("max_chart_count") = 0, py::arg("quality") = py::none(),
         py::arg("parallel_partitions") = 0, py::arg("worker_count") = 0,
         "Unwrap a mesh into a UV atlas. parallel_partitions=0 picks the partition count "
-        "automatically (several PCA partitions for large meshes, one UVAtlasCreate call for "
+        "automatically (four PCA partitions on large meshes, one UVAtlasCreate call for "
         "small ones); 1 forces a single chart set and N>1 forces N partitions.");
 
     py::class_<PythonTextureBaker>(module, "TextureBaker")

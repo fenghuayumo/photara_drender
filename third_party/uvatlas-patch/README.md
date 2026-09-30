@@ -32,10 +32,17 @@ cmake --build build_uvatlas --config Release --parallel
 
 ## Contents
 
-Performance work: spatial-hash segment overlap tests (`segmentoverlap.h`), a single labeled
-Dijkstra for the closest boundary-loop pair, hash-map edge splitting in the root chart, and
-phase timing hooks (`uvatlas_timing.h`). On a 1.76M face scan mesh this turned a 2498 s
-single-call unwrap into 153 s with the partitioned product path.
+Performance work: spatial-hash segment overlap tests (`segmentoverlap.h`), one labeled
+Dijkstra that proposes every vertex-disjoint boundary seam for the round, a single
+connectivity rebuild after those seams, a `std::thread` chart queue for initialization and
+parameterization, parallel stretch optimization, hash-map edge splitting in the root chart,
+and phase timing hooks (`uvatlas_timing.h`). `UVAtlasSetEngineWorkerCount` caps the queue on
+the calling thread. The same fork is `fenghuayumo/UVAtlas` `main` (`f1208ed`).
+
+On the product single-call path (1024², gutter 1, `max_stretch = 1/6`, Ryzen 9 7950X) this
+measures 541 s / 592 charts for `mesh.ply` (1.76M faces; previously 2498 s / 617 charts) and
+138 s / 577 charts for the repaired `images_mesh.obj` (747600 faces; previously 650 s / 580
+charts). Both stay inside the stretch budget. PCA partitions are still faster on these meshes.
 
 Two correctness fixes are also included, because both large meshes hit them:
 

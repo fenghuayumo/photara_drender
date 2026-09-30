@@ -47,15 +47,21 @@ void validate_input(
 
 // Meshes above this face count default to several PCA partitions.
 constexpr std::uint32_t kAutoPartitionFaceThreshold = 100'000;
+// Requesting 4 is the split whose chart count was measured on the sample scans.
+// Finer PCA groups make the unwrap faster and add an island boundary on every cut.
 constexpr std::uint32_t kAutoPartitionCount = 4;
 
-// A single UVAtlasCreate call cuts every extra boundary loop of the chart it is
-// processing, and each cut forces the engine to rebuild the whole chart connectivity
-// (BuildFullConnection/FindAllEdges over every face). That cost is quadratic in the
-// mesh size and dominates large scan meshes, which routinely carry hundreds of
-// boundary loops. Partitioning the faces by PCA first keeps every cut local to a
-// partition and charts the partitions in parallel, which is one to two orders of
-// magnitude faster on such meshes while keeping the same stretch budget.
+std::uint32_t thread_budget(const UvAtlasOptions& options) {
+    if (options.worker_count != 0) {
+        return options.worker_count;
+    }
+    const unsigned hw = std::thread::hardware_concurrency();
+    return hw == 0 ? 1u : static_cast<std::uint32_t>(hw);
+}
+
+// Above 100k faces the default requests four PCA partitions. Spare threads run
+// the chart queue inside each partition. They do not request more islands:
+// the engine still cuts one over-stretch chart per round.
 std::uint32_t resolve_parallel_partitions(std::size_t face_count, const UvAtlasOptions& options) {
     if (options.parallel_partitions != 0) {
         return options.parallel_partitions;
@@ -370,17 +376,20 @@ UvAtlasOutput unwrap_uv_parallel(
     const UvAtlasOptions& options) {
     auto partitions = partition_faces_pca(positions, triangle_indices, options.parallel_partitions);
     std::vector<PartitionOutput> partition_outputs(partitions.size());
-    const std::size_t default_workers = std::max(1U, std::thread::hardware_concurrency());
-    const std::size_t worker_count = std::min<std::size_t>(
-        partitions.size(), options.worker_count == 0 ? default_workers : options.worker_count);
+    const std::size_t budget = std::max<std::size_t>(1, thread_budget(options));
+    const std::size_t worker_count = std::min(partitions.size(), budget);
+    // Leftover threads parameterize charts inside a partition. The count is
+    // fixed up front so the partitions together stay within the budget.
+    const auto engine_workers = static_cast<std::uint32_t>(std::max<std::size_t>(1, budget / worker_count));
     std::atomic_size_t next_partition = 0;
     std::exception_ptr worker_error;
     std::mutex error_mutex;
     std::vector<std::jthread> workers;
     workers.reserve(worker_count);
     for (std::size_t worker = 0; worker < worker_count; ++worker) {
-        workers.emplace_back([&] {
+        workers.emplace_back([&, engine_workers] {
             try {
+                DirectX::UVAtlasSetEngineWorkerCount(engine_workers);
                 while (true) {
                     const auto partition = next_partition.fetch_add(1);
                     if (partition >= partitions.size()) {
@@ -537,6 +546,12 @@ UvAtlasOutput unwrap_uv(
     float output_stretch = 0.0F;
     std::size_t output_chart_count = 0;
     const auto flags = atlas_flags(options.quality, false);
+    // One UVAtlasCreate call spends the thread budget on its chart queue.
+    // Partition workers set their own engine count from the leftover budget.
+    const std::uint32_t engineWorkers = options.worker_count == 0
+        ? std::max<std::uint32_t>(1, std::thread::hardware_concurrency())
+        : options.worker_count;
+    DirectX::UVAtlasSetEngineWorkerCount(engineWorkers);
     const HRESULT result = DirectX::UVAtlasCreate(
         directx_positions.data(),
         directx_positions.size(),
