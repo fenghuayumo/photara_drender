@@ -125,7 +125,14 @@ target_include_directories(photara_drender
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>)
-target_link_libraries(photara_drender PUBLIC Vulkan::Vulkan)
+if(NOT TARGET photara_vk::photara_vk)
+    add_subdirectory(
+        "${CMAKE_CURRENT_SOURCE_DIR}/../photara_vk"
+        "${CMAKE_CURRENT_BINARY_DIR}/photara_vk")
+endif()
+target_link_libraries(photara_drender PUBLIC
+    Vulkan::Vulkan
+    $<BUILD_INTERFACE:photara_vk::photara_vk>)
 if(PHOTARA_HAS_UVATLAS)
     target_link_libraries(photara_drender PRIVATE ${PHOTARA_UVATLAS_TARGET})
 endif()
