@@ -416,8 +416,11 @@ TextureRefineOutput TextureRefiner::refine(
     submit_info.commandBufferCount = 1;
     submit_info.pCommandBuffers = &command_buffer;
     const auto optimization_start = std::chrono::steady_clock::now();
-    check_vk(vkQueueSubmit(impl_->context_.queue, 1, &submit_info, VK_NULL_HANDLE), "vkQueueSubmit");
-    check_vk(vkQueueWaitIdle(impl_->context_.queue), "vkQueueWaitIdle");
+    {
+        photara::vk::QueueLock queue_lock(impl_->context_.runtime);
+        check_vk(vkQueueSubmit(impl_->context_.queue, 1, &submit_info, VK_NULL_HANDLE), "vkQueueSubmit");
+        check_vk(vkQueueWaitIdle(impl_->context_.queue), "vkQueueWaitIdle");
+    }
     const auto optimization_end = std::chrono::steady_clock::now();
 
     TextureRefineOutput output;

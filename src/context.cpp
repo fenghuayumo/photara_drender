@@ -451,7 +451,15 @@ Context::Impl::Impl(const ContextOptions& options) {
 
 Context::Impl::~Impl() {
     if (device != VK_NULL_HANDLE) {
-        vkDeviceWaitIdle(device);
+        if (runtime.valid()) {
+            photara::vk::QueueLock lock(runtime);
+            vkDeviceWaitIdle(device);
+        } else if (queue != VK_NULL_HANDLE) {
+            photara::vk::QueueLock lock(queue);
+            vkDeviceWaitIdle(device);
+        } else {
+            vkDeviceWaitIdle(device);
+        }
         runtime = {};
         vkDestroyDescriptorPool(device, descriptor_pool, nullptr);
         vkDestroyCommandPool(device, command_pool, nullptr);
@@ -572,8 +580,11 @@ void Context::Impl::dispatch(
     VkSubmitInfo submit_info{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submit_info.commandBufferCount = 1;
     submit_info.pCommandBuffers = &command_buffer;
-    check_vk(vkQueueSubmit(queue, 1, &submit_info, VK_NULL_HANDLE), "vkQueueSubmit");
-    check_vk(vkQueueWaitIdle(queue), "vkQueueWaitIdle");
+    {
+        photara::vk::QueueLock queue_lock(runtime);
+        check_vk(vkQueueSubmit(queue, 1, &submit_info, VK_NULL_HANDLE), "vkQueueSubmit");
+        check_vk(vkQueueWaitIdle(queue), "vkQueueWaitIdle");
+    }
     vkFreeCommandBuffers(device, command_pool, 1, &command_buffer);
     vkFreeDescriptorSets(device, descriptor_pool, 1, &descriptor_set);
 }
@@ -656,8 +667,11 @@ void Context::Impl::dispatch_ray_query(
     VkSubmitInfo submit_info{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submit_info.commandBufferCount = 1;
     submit_info.pCommandBuffers = &command_buffer;
-    check_vk(vkQueueSubmit(queue, 1, &submit_info, VK_NULL_HANDLE), "vkQueueSubmit");
-    check_vk(vkQueueWaitIdle(queue), "vkQueueWaitIdle");
+    {
+        photara::vk::QueueLock queue_lock(runtime);
+        check_vk(vkQueueSubmit(queue, 1, &submit_info, VK_NULL_HANDLE), "vkQueueSubmit");
+        check_vk(vkQueueWaitIdle(queue), "vkQueueWaitIdle");
+    }
     vkFreeCommandBuffers(device, command_pool, 1, &command_buffer);
     vkFreeDescriptorSets(device, descriptor_pool, 1, &descriptor_set);
 }
