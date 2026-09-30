@@ -11,6 +11,7 @@
 #include <vulkan/vulkan.h>
 
 #include "photara_drender/context.hpp"
+#include "photara_vk/photara_vk.hpp"
 
 namespace photara_drender {
 
@@ -39,25 +40,8 @@ struct Buffer {
     [[nodiscard]] VkDeviceAddress device_address() const;
 };
 
-struct AccelerationStructure {
-    VkDevice device = VK_NULL_HANDLE;
-    VkAccelerationStructureKHR handle = VK_NULL_HANDLE;
-    PFN_vkDestroyAccelerationStructureKHR destroy_function = nullptr;
-    Buffer storage;
-
-    AccelerationStructure() = default;
-    ~AccelerationStructure();
-    AccelerationStructure(AccelerationStructure&& other) noexcept;
-    AccelerationStructure& operator=(AccelerationStructure&& other) noexcept;
-    AccelerationStructure(const AccelerationStructure&) = delete;
-    AccelerationStructure& operator=(const AccelerationStructure&) = delete;
-};
-
 struct RayQueryScene {
-    Buffer vertices;
-    Buffer indices;
-    AccelerationStructure bottom_level;
-    AccelerationStructure top_level;
+    photara::vk::TriangleScene triangles;
 };
 
 struct ComputePipeline {
@@ -121,7 +105,7 @@ public:
         const Buffer& positions,
         const Buffer& normals,
         const Buffer& raster,
-        const AccelerationStructure& scene,
+        VkAccelerationStructureKHR scene,
         const Buffer& visibility,
         const void* push_constants,
         std::uint32_t push_constant_size,
@@ -136,6 +120,9 @@ public:
     VkCommandPool command_pool = VK_NULL_HANDLE;
     VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT debug_messenger = VK_NULL_HANDLE;
+    // Adopted view of `device`. It does not own the VkDevice. Drop it before
+    // vkDestroyDevice so its command pool is destroyed first.
+    photara::vk::Device runtime;
     mutable std::mutex dispatch_mutex;
 };
 

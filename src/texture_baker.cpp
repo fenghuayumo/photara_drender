@@ -257,7 +257,7 @@ TextureBakeOutput TextureBaker::bake(
             ray_push.dimensions = {options.width, options.height, 0, 0};
             impl_->context_.dispatch_ray_query(
                 *impl_->ray_visibility_pipeline_, atlas_position_buffer, atlas_normal_buffer, atlas_raster_buffer,
-                ray_scene->top_level, ray_visibility_buffer, &ray_push, sizeof(ray_push),
+                ray_scene->triangles.top_level(), ray_visibility_buffer, &ray_push, sizeof(ray_push),
                 divide_round_up(static_cast<std::uint32_t>(atlas_pixel_count), PROJECTION_BLOCK_SIZE));
         }
         std::vector<float> shadow_raster_data{0.0F};
