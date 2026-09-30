@@ -88,7 +88,8 @@ VkDescriptorSet allocate_descriptor_set(Context::Impl& context, const ComputePip
     VkDescriptorSetAllocateInfo allocate_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     allocate_info.descriptorPool = context.descriptor_pool;
     allocate_info.descriptorSetCount = 1;
-    allocate_info.pSetLayouts = &pipeline.descriptor_set_layout;
+    const VkDescriptorSetLayout set_layout = pipeline.set_layout();
+    allocate_info.pSetLayouts = &set_layout;
     VkDescriptorSet result = VK_NULL_HANDLE;
     check_vk(vkAllocateDescriptorSets(context.device, &allocate_info, &result), "vkAllocateDescriptorSets");
     return result;
@@ -319,19 +320,19 @@ TextureRefineOutput TextureRefiner::refine(
         const float normalization = batch_valid_weight > 0.0
             ? static_cast<float>(1.0 / (batch_valid_weight * 3.0))
             : 0.0F;
-        vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, impl_->gradient_pipeline_.handle);
+        vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, impl_->gradient_pipeline_.handle());
         for (std::uint32_t batch = 0; batch < options.batch_size; ++batch) {
             const auto view_index = (static_cast<std::size_t>(step) * options.batch_size + batch) % views.size();
             const auto& view = cached_views[view_index];
             vkCmdBindDescriptorSets(
-                command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, impl_->gradient_pipeline_.pipeline_layout,
+                command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, impl_->gradient_pipeline_.layout(),
                 0, 1, &gradient_sets[view_index], 0, nullptr);
             const GradientPushConstants push{
                 view.pixel_count, options.width, options.height, step,
                 options.photometric_epsilon, normalization,
             };
             vkCmdPushConstants(
-                command_buffer, impl_->gradient_pipeline_.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
+                command_buffer, impl_->gradient_pipeline_.layout(), VK_SHADER_STAGE_COMPUTE_BIT,
                 0, sizeof(push), &push);
             vkCmdDispatch(command_buffer, divide_round_up(view.pixel_count, BLOCK_SIZE), 1, 1);
         }
@@ -351,12 +352,12 @@ TextureRefineOutput TextureRefiner::refine(
             options.clamp_min,
             options.clamp_max,
         };
-        vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, impl_->adam_pipeline_.handle);
+        vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, impl_->adam_pipeline_.handle());
         vkCmdBindDescriptorSets(
-            command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, impl_->adam_pipeline_.pipeline_layout,
+            command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, impl_->adam_pipeline_.layout(),
             0, 1, &adam_set, 0, nullptr);
         vkCmdPushConstants(
-            command_buffer, impl_->adam_pipeline_.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
+            command_buffer, impl_->adam_pipeline_.layout(), VK_SHADER_STAGE_COMPUTE_BIT,
             0, sizeof(adam_push), &adam_push);
         vkCmdDispatch(
             command_buffer,
@@ -372,16 +373,16 @@ TextureRefineOutput TextureRefiner::refine(
         vkCmdFillBuffer(command_buffer, second_moment_buffer.handle, 0, second_moment_buffer.size, 0);
         transfer_to_shader_barrier(command_buffer);
         for (std::uint32_t seam_step = 0; seam_step < actual_seam_steps; ++seam_step) {
-            vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, impl_->seam_pipeline_.handle);
+            vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, impl_->seam_pipeline_.handle());
             vkCmdBindDescriptorSets(
-                command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, impl_->seam_pipeline_.pipeline_layout,
+                command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, impl_->seam_pipeline_.layout(),
                 0, 1, &seam_set, 0, nullptr);
             const SeamPushConstants seam_push{
                 seam_pair_count, options.width, options.height, options.steps + seam_step,
                 options.seam_epsilon, 1.0F / static_cast<float>(seam_pair_count * 3),
             };
             vkCmdPushConstants(
-                command_buffer, impl_->seam_pipeline_.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
+                command_buffer, impl_->seam_pipeline_.layout(), VK_SHADER_STAGE_COMPUTE_BIT,
                 0, sizeof(seam_push), &seam_push);
             vkCmdDispatch(command_buffer, divide_round_up(seam_pair_count, BLOCK_SIZE), 1, 1);
             shader_memory_barrier(command_buffer);
@@ -397,12 +398,12 @@ TextureRefineOutput TextureRefiner::refine(
                 options.clamp_min,
                 options.clamp_max,
             };
-            vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, impl_->adam_pipeline_.handle);
+            vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, impl_->adam_pipeline_.handle());
             vkCmdBindDescriptorSets(
-                command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, impl_->adam_pipeline_.pipeline_layout,
+                command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, impl_->adam_pipeline_.layout(),
                 0, 1, &adam_set, 0, nullptr);
             vkCmdPushConstants(
-                command_buffer, impl_->adam_pipeline_.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
+                command_buffer, impl_->adam_pipeline_.layout(), VK_SHADER_STAGE_COMPUTE_BIT,
                 0, sizeof(adam_push), &adam_push);
             vkCmdDispatch(
                 command_buffer,

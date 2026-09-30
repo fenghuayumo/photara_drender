@@ -44,30 +44,9 @@ struct RayQueryScene {
     photara::vk::TriangleScene triangles;
 };
 
-struct ComputePipeline {
-    VkDevice device = VK_NULL_HANDLE;
-    VkDescriptorSetLayout descriptor_set_layout = VK_NULL_HANDLE;
-    VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
-    VkPipeline handle = VK_NULL_HANDLE;
-    std::uint32_t binding_count = 0;
-
-    ComputePipeline() = default;
-    ComputePipeline(
-        VkDevice logical_device,
-        std::span<const std::byte> spir_v_bytes,
-        std::uint32_t storage_buffer_count,
-        std::uint32_t push_constant_size);
-    ComputePipeline(
-        VkDevice logical_device,
-        std::span<const std::byte> spir_v_bytes,
-        std::span<const VkDescriptorType> descriptor_types,
-        std::uint32_t push_constant_size);
-    ~ComputePipeline();
-    ComputePipeline(ComputePipeline&& other) noexcept;
-    ComputePipeline& operator=(ComputePipeline&& other) noexcept;
-    ComputePipeline(const ComputePipeline&) = delete;
-    ComputePipeline& operator=(const ComputePipeline&) = delete;
-};
+// photara_vk owns the pipeline object. The adopted device keeps push
+// descriptors off so these layouts stay allocatable from descriptor_pool.
+using ComputePipeline = photara::vk::ComputePipeline;
 
 class Context::Impl {
 public:

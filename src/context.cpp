@@ -317,94 +317,6 @@ VkDeviceAddress Buffer::device_address() const {
     return vkGetBufferDeviceAddress(device, &address_info);
 }
 
-ComputePipeline::ComputePipeline(
-    VkDevice logical_device,
-    std::span<const std::byte> spir_v_bytes,
-    std::uint32_t storage_buffer_count,
-    std::uint32_t push_constant_size)
-    : ComputePipeline() {
-    std::vector<VkDescriptorType> descriptor_types(storage_buffer_count, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-    *this = ComputePipeline(logical_device, spir_v_bytes, descriptor_types, push_constant_size);
-}
-
-ComputePipeline::ComputePipeline(
-    VkDevice logical_device,
-    std::span<const std::byte> spir_v_bytes,
-    std::span<const VkDescriptorType> descriptor_types,
-    std::uint32_t push_constant_size)
-    : device(logical_device), binding_count(static_cast<std::uint32_t>(descriptor_types.size())) {
-    std::vector<VkDescriptorSetLayoutBinding> bindings(descriptor_types.size());
-    for (std::uint32_t i = 0; i < descriptor_types.size(); ++i) {
-        bindings[i].binding = i;
-        bindings[i].descriptorType = descriptor_types[i];
-        bindings[i].descriptorCount = 1;
-        bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    }
-
-    VkDescriptorSetLayoutCreateInfo descriptor_layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    descriptor_layout_info.bindingCount = static_cast<std::uint32_t>(bindings.size());
-    descriptor_layout_info.pBindings = bindings.data();
-    check_vk(
-        vkCreateDescriptorSetLayout(device, &descriptor_layout_info, nullptr, &descriptor_set_layout),
-        "vkCreateDescriptorSetLayout");
-
-    VkPushConstantRange push_range{};
-    push_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    push_range.offset = 0;
-    push_range.size = push_constant_size;
-    VkPipelineLayoutCreateInfo pipeline_layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    pipeline_layout_info.setLayoutCount = 1;
-    pipeline_layout_info.pSetLayouts = &descriptor_set_layout;
-    pipeline_layout_info.pushConstantRangeCount = push_constant_size == 0 ? 0U : 1U;
-    pipeline_layout_info.pPushConstantRanges = push_constant_size == 0 ? nullptr : &push_range;
-    check_vk(vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &pipeline_layout), "vkCreatePipelineLayout");
-
-    if (spir_v_bytes.empty() || spir_v_bytes.size() % sizeof(std::uint32_t) != 0) {
-        throw std::runtime_error("Invalid embedded SPIR-V bytecode");
-    }
-    std::vector<std::uint32_t> spir_v(spir_v_bytes.size() / sizeof(std::uint32_t));
-    std::memcpy(spir_v.data(), spir_v_bytes.data(), spir_v_bytes.size());
-    VkShaderModuleCreateInfo shader_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    shader_info.codeSize = spir_v.size() * sizeof(std::uint32_t);
-    shader_info.pCode = spir_v.data();
-    VkShaderModule shader_module = VK_NULL_HANDLE;
-    check_vk(vkCreateShaderModule(device, &shader_info, nullptr, &shader_module), "vkCreateShaderModule");
-
-    VkPipelineShaderStageCreateInfo stage_info{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
-    stage_info.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    stage_info.module = shader_module;
-    stage_info.pName = "main";
-    VkComputePipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
-    pipeline_info.stage = stage_info;
-    pipeline_info.layout = pipeline_layout;
-    const VkResult result = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &handle);
-    vkDestroyShaderModule(device, shader_module, nullptr);
-    check_vk(result, "vkCreateComputePipelines");
-}
-
-ComputePipeline::~ComputePipeline() {
-    if (device != VK_NULL_HANDLE) {
-        vkDestroyPipeline(device, handle, nullptr);
-        vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
-        vkDestroyDescriptorSetLayout(device, descriptor_set_layout, nullptr);
-    }
-}
-
-ComputePipeline::ComputePipeline(ComputePipeline&& other) noexcept {
-    *this = std::move(other);
-}
-
-ComputePipeline& ComputePipeline::operator=(ComputePipeline&& other) noexcept {
-    if (this != &other) {
-        std::swap(device, other.device);
-        std::swap(descriptor_set_layout, other.descriptor_set_layout);
-        std::swap(pipeline_layout, other.pipeline_layout);
-        std::swap(handle, other.handle);
-        std::swap(binding_count, other.binding_count);
-    }
-    return *this;
-}
-
 Context::Impl::Impl(const ContextOptions& options) {
     const bool validation_enabled = options.enable_validation || PHOTARA_ENABLE_VALIDATION;
     std::vector<const char*> layers;
@@ -533,6 +445,7 @@ Context::Impl::Impl(const ContextOptions& options) {
     external.queue_family = queue_family_index;
     external.enabled.ray_query = device_info.supports_ray_query;
     external.enabled.buffer_device_address = device_info.supports_ray_query;
+    // push_descriptors stays false: dispatch allocates sets from descriptor_pool.
     runtime = photara::vk::Device::adopt(external);
 }
 
@@ -569,9 +482,9 @@ ComputePipeline Context::Impl::create_pipeline(
     std::uint32_t push_constant_size) const {
     if (const auto override_directory = shader_directory_override()) {
         const auto bytes = read_spir_v(*override_directory / shader_name);
-        return ComputePipeline(device, bytes, storage_buffer_count, push_constant_size);
+        return runtime.create_compute(bytes, storage_buffer_count, push_constant_size);
     }
-    return ComputePipeline(device, embedded_shader(shader_name), storage_buffer_count, push_constant_size);
+    return runtime.create_compute(embedded_shader(shader_name), storage_buffer_count, push_constant_size);
 }
 
 ComputePipeline Context::Impl::create_pipeline(
@@ -580,9 +493,9 @@ ComputePipeline Context::Impl::create_pipeline(
     std::uint32_t push_constant_size) const {
     if (const auto override_directory = shader_directory_override()) {
         const auto bytes = read_spir_v(*override_directory / shader_name);
-        return ComputePipeline(device, bytes, descriptor_types, push_constant_size);
+        return runtime.create_compute(bytes, descriptor_types, push_constant_size);
     }
-    return ComputePipeline(device, embedded_shader(shader_name), descriptor_types, push_constant_size);
+    return runtime.create_compute(embedded_shader(shader_name), descriptor_types, push_constant_size);
 }
 
 RayQueryScene Context::Impl::create_ray_query_scene(
@@ -603,13 +516,14 @@ void Context::Impl::dispatch(
     std::uint32_t group_count_y,
     std::uint32_t group_count_z) const {
     const std::scoped_lock lock(dispatch_mutex);
-    if (buffers.size() != pipeline.binding_count) {
+    if (buffers.size() != pipeline.binding_count()) {
         throw std::invalid_argument("Descriptor buffer count does not match pipeline layout");
     }
     VkDescriptorSetAllocateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     set_info.descriptorPool = descriptor_pool;
     set_info.descriptorSetCount = 1;
-    set_info.pSetLayouts = &pipeline.descriptor_set_layout;
+    const VkDescriptorSetLayout set_layout = pipeline.set_layout();
+    set_info.pSetLayouts = &set_layout;
     VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
     check_vk(vkAllocateDescriptorSets(device, &set_info, &descriptor_set), "vkAllocateDescriptorSets");
 
@@ -619,7 +533,7 @@ void Context::Impl::dispatch(
         writes[i].dstSet = descriptor_set;
         writes[i].dstBinding = i;
         writes[i].descriptorCount = 1;
-        writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[i].descriptorType = pipeline.descriptor_type(i);
         writes[i].pBufferInfo = &buffers[i];
     }
     vkUpdateDescriptorSets(device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
@@ -633,11 +547,11 @@ void Context::Impl::dispatch(
     VkCommandBufferBeginInfo begin_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     check_vk(vkBeginCommandBuffer(command_buffer, &begin_info), "vkBeginCommandBuffer");
-    vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle);
+    vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle());
     vkCmdBindDescriptorSets(
         command_buffer,
         VK_PIPELINE_BIND_POINT_COMPUTE,
-        pipeline.pipeline_layout,
+        pipeline.layout(),
         0,
         1,
         &descriptor_set,
@@ -646,7 +560,7 @@ void Context::Impl::dispatch(
     if (push_constant_size != 0) {
         vkCmdPushConstants(
             command_buffer,
-            pipeline.pipeline_layout,
+            pipeline.layout(),
             VK_SHADER_STAGE_COMPUTE_BIT,
             0,
             push_constant_size,
@@ -675,13 +589,14 @@ void Context::Impl::dispatch_ray_query(
     std::uint32_t push_constant_size,
     std::uint32_t group_count_x) const {
     const std::scoped_lock lock(dispatch_mutex);
-    if (!device_info.supports_ray_query || pipeline.binding_count != 5 || scene == VK_NULL_HANDLE) {
+    if (!device_info.supports_ray_query || pipeline.binding_count() != 5 || scene == VK_NULL_HANDLE) {
         throw std::runtime_error("Invalid ray-query dispatch state");
     }
     VkDescriptorSetAllocateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     set_info.descriptorPool = descriptor_pool;
     set_info.descriptorSetCount = 1;
-    set_info.pSetLayouts = &pipeline.descriptor_set_layout;
+    const VkDescriptorSetLayout set_layout = pipeline.set_layout();
+    set_info.pSetLayouts = &set_layout;
     VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
     check_vk(vkAllocateDescriptorSets(device, &set_info, &descriptor_set), "vkAllocateDescriptorSets");
 
@@ -727,13 +642,13 @@ void Context::Impl::dispatch_ray_query(
     VkCommandBufferBeginInfo begin_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     check_vk(vkBeginCommandBuffer(command_buffer, &begin_info), "vkBeginCommandBuffer");
-    vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle);
+    vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.handle());
     vkCmdBindDescriptorSets(
-        command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.pipeline_layout,
+        command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.layout(),
         0, 1, &descriptor_set, 0, nullptr);
     if (push_constant_size != 0) {
         vkCmdPushConstants(
-            command_buffer, pipeline.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
+            command_buffer, pipeline.layout(), VK_SHADER_STAGE_COMPUTE_BIT,
             0, push_constant_size, push_constants);
     }
     vkCmdDispatch(command_buffer, group_count_x, 1, 1);
