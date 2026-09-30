@@ -73,56 +73,20 @@ set(PHOTARA_SHADER_SOURCES
     shaders/interpolate_grad_raster.hlsl
     shaders/texture_forward.hlsl
     shaders/texture_grad_texture.hlsl
-    shaders/texture_grad_uv.hlsl)
-list(APPEND PHOTARA_SHADER_SOURCES
+    shaders/texture_grad_uv.hlsl
     shaders/project_texture.hlsl
-    shaders/project_ray_visibility.hlsl
-    shaders/atlas_photometric_gradient.hlsl
     shaders/atlas_seam_gradient.hlsl
     shaders/atlas_adam_update.hlsl)
 
-set(PHOTARA_SHADER_BINARIES)
-set(PHOTARA_SHADER_EMBEDDED_HEADERS)
-foreach(shader IN LISTS PHOTARA_SHADER_SOURCES)
-    get_filename_component(shader_name "${shader}" NAME)
-    set(shader_binary "${CMAKE_CURRENT_BINARY_DIR}/shaders/${shader_name}.spv")
-    set(shader_profile cs_6_0)
-    set(shader_extra_options)
-    if(shader_name STREQUAL "project_ray_visibility.hlsl")
-        set(shader_profile cs_6_5)
-        list(APPEND shader_extra_options -fspv-extension=SPV_KHR_ray_query)
-    elseif(shader_name STREQUAL "atlas_photometric_gradient.hlsl")
-        set(shader_profile cs_6_6)
-    endif()
-    add_custom_command(
-        OUTPUT "${shader_binary}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/shaders"
-        COMMAND "${PHOTARA_DXC_EXECUTABLE}"
-                -spirv -T ${shader_profile} -E main -O3
-                -fspv-target-env=vulkan1.2
-                -fvk-use-dx-layout
-                ${shader_extra_options}
-                "${CMAKE_CURRENT_SOURCE_DIR}/${shader}"
-                -Fo "${shader_binary}"
-        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${shader}"
-        VERBATIM)
-    list(APPEND PHOTARA_SHADER_BINARIES "${shader_binary}")
-    string(MAKE_C_IDENTIFIER "${shader_name}_spv" shader_variable)
-    set(shader_embedded_header "${CMAKE_CURRENT_BINARY_DIR}/generated/${shader_name}.embedded.hpp")
-    add_custom_command(
-        OUTPUT "${shader_embedded_header}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
-        COMMAND "${CMAKE_COMMAND}"
-                -DINPUT_FILE=${shader_binary}
-                -DOUTPUT_FILE=${shader_embedded_header}
-                -DVARIABLE_NAME=${shader_variable}
-                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_spir_v.cmake"
-        DEPENDS "${shader_binary}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_spir_v.cmake"
-        VERBATIM)
-    list(APPEND PHOTARA_SHADER_EMBEDDED_HEADERS "${shader_embedded_header}")
-endforeach()
-
-add_custom_target(photara_shaders DEPENDS ${PHOTARA_SHADER_BINARIES} ${PHOTARA_SHADER_EMBEDDED_HEADERS})
+if(NOT TARGET photara_vk::photara_vk)
+    add_subdirectory(
+        "${CMAKE_CURRENT_SOURCE_DIR}/../photara_vk"
+        "${CMAKE_CURRENT_BINARY_DIR}/photara_vk")
+endif()
+if(NOT PHOTARA_VK_DXC)
+    set(PHOTARA_VK_DXC "${PHOTARA_DXC_EXECUTABLE}")
+endif()
+include("${PHOTARA_VK_CMAKE_DIR}/PhotaraVkShaders.cmake")
 
 add_library(photara_drender
     src/context.cpp
@@ -132,20 +96,32 @@ add_library(photara_drender
     src/texture_refiner.cpp
     src/uv_atlas.cpp)
 add_library(photara::render ALIAS photara_drender)
-add_dependencies(photara_drender photara_shaders)
 set_target_properties(photara_drender PROPERTIES EXPORT_NAME render)
 target_compile_features(photara_drender PUBLIC cxx_std_20)
+photara_vk_embed_hlsl(
+    TARGET photara_drender
+    SHADERS ${PHOTARA_SHADER_SOURCES}
+    INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
+    OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+photara_vk_embed_hlsl(
+    TARGET photara_drender
+    SHADERS shaders/project_ray_visibility.hlsl
+    PROFILE cs_6_5
+    EXTRA -fspv-extension=SPV_KHR_ray_query
+    INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
+    OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+photara_vk_embed_hlsl(
+    TARGET photara_drender
+    SHADERS shaders/atlas_photometric_gradient.hlsl
+    PROFILE cs_6_6
+    INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
+    OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 target_include_directories(photara_drender
     PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated"
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>)
-if(NOT TARGET photara_vk::photara_vk)
-    add_subdirectory(
-        "${CMAKE_CURRENT_SOURCE_DIR}/../photara_vk"
-        "${CMAKE_CURRENT_BINARY_DIR}/photara_vk")
-endif()
 target_link_libraries(photara_drender PUBLIC
     Vulkan::Vulkan
     $<BUILD_INTERFACE:photara_vk::photara_vk>)
