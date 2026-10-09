@@ -6,6 +6,7 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 option(PHOTARA_BUILD_PYTHON_BINDINGS "Build the Python extension" ON)
+option(PHOTARA_BUNDLE_WINDOWS_RUNTIME "Bundle Windows runtime DLLs beside the Python extension" ON)
 option(PHOTARA_BUILD_NATIVE_TESTS "Build native tests" ON)
 option(PHOTARA_ENABLE_VALIDATION "Enable Vulkan validation by default" OFF)
 option(PHOTARA_ENABLE_UVATLAS "Enable Microsoft UVAtlas unwrapping" ON)
@@ -217,6 +218,10 @@ if(PHOTARA_BUILD_PYTHON_BINDINGS)
                     "$<TARGET_FILE_DIR:_photara_drender>/shaders/")
     endforeach()
     install(TARGETS _photara_drender LIBRARY DESTINATION photara_drender RUNTIME DESTINATION photara_drender)
+    if(WIN32 AND PHOTARA_BUNDLE_WINDOWS_RUNTIME)
+        include(cmake/BundleWindowsRuntime.cmake)
+        photara_bundle_windows_runtime()
+    endif()
     install(
         FILES
             python/photara_drender/__init__.py

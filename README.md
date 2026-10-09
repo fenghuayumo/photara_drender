@@ -42,6 +42,11 @@ ctest --test-dir build -C Release --output-on-failure
 - `PHOTARA_ENABLE_VALIDATION=ON`：启用 Vulkan validation layer。
 
 Python wheel 可以使用 `python -m pip wheel .` 构建。
+Windows wheel 默认将 VC++ Release 运行时和 Vulkan loader DLL 安装到 Python 包目录，
+导入时自动注册 DLL 搜索路径。无需另行安装 VC++ Redistributable 或 Vulkan SDK；
+仍需目标机器安装支持 Vulkan 的显卡驱动，以及与 wheel 匹配的 Python。
+构建时可用 `PHOTARA_VULKAN_RUNTIME_DLL` 指定 loader，或用
+`PHOTARA_BUNDLE_WINDOWS_RUNTIME=OFF` 禁用运行库打包。
 
 ## UV 展开与纹理投影
 

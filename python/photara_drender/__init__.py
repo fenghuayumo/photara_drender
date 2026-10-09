@@ -1,5 +1,12 @@
 """Python interface for photara_drender."""
 
+import os as _os
+
+# Keep the handle alive so bundled DLLs remain discoverable for later loads.
+_dll_directory = None
+if _os.name == "nt":
+    _dll_directory = _os.add_dll_directory(_os.path.dirname(__file__))
+
 from ._photara_drender import (
     DeviceInfo,
     Rasterizer,
