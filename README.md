@@ -1,26 +1,29 @@
 # photara_drender
 
-`photara_drender` 是使用 C++20、Vulkan 1.2 compute 和 HLSL 从零实现的跨平台可微渲染与纹理烘焙库。
-它不依赖 CUDA 或 OpenGL 上下文，提供 C++、NumPy 和 PyTorch 接口。
+`photara_drender` is a cross-platform differentiable rendering and texture baking library
+implemented from scratch using C++20, Vulkan 1.2 compute, and HLSL.
+It requires neither CUDA nor an OpenGL context and provides C++, NumPy, and PyTorch interfaces.
 
-当前 `0.4.0` 版本包含：
+Version `0.4.0` includes:
 
-- tile-binned 可微三角形光栅化、透视正确重心坐标和像素导数；
-- 顶点属性插值及其反向传播；
-- 可微双线性纹理采样、atlas texel/UV 梯度；
-- Microsoft UVAtlas 展 UV，保留 vertex remap、face chart id 和 stretch；
-- atlas 空间位置/法线展开；
-- 多相机 texture projection、PCF shadow map 可见性和置信度融合；
-- `VK_KHR_ray_query` BLAS/TLAS 精确遮挡校验，以及不支持设备上的 shadow-map 降级；
-- 多视图纹理图集可微优化、chart-aware TV 和 seam consistency loss。
+- Differentiable triangle rasterization with tile binning, perspective-correct barycentric coordinates, and pixel derivatives.
+- Vertex attribute interpolation and backpropagation.
+- Differentiable bilinear texture sampling with atlas texel and UV gradients.
+- Microsoft UVAtlas unwrapping with vertex remapping, face chart IDs, and stretch information.
+- Position and normal mapping into atlas space.
+- Texture projection from multiple cameras, PCF shadow-map visibility, and confidence-weighted blending.
+- Precise occlusion checks using `VK_KHR_ray_query` with BLAS/TLAS, with a shadow-map fallback on unsupported devices.
+- Differentiable texture atlas optimization across multiple views, chart-aware total variation, and seam consistency loss.
 
-项目定义的函数、变量、文件和命名空间使用 `snake_case`，类型使用 `PascalCase`，常量使用
-`UPPER_SNAKE_CASE`。所有 shader 均使用 HLSL，经 DXC 编译为 Vulkan SPIR-V。
+Project-defined functions, variables, files, and namespaces use `snake_case`; types use
+`PascalCase`; constants use `UPPER_SNAKE_CASE`. All shaders are written in HLSL and compiled
+into Vulkan SPIR-V with DXC.
 
-## 构建
+## Building
 
-需要 CMake 3.24+、C++20 编译器、Vulkan SDK 1.2+ 和 DXC。展 UV 默认编译 submodule
-`third_party/UVAtlas`（<https://github.com/fenghuayumo/UVAtlas>）。克隆时带上子模块：
+Building requires CMake 3.24+, a C++20 compiler, Vulkan SDK 1.2+, and DXC. UV unwrapping builds
+the `third_party/UVAtlas` submodule by default
+(<https://github.com/fenghuayumo/UVAtlas>). Clone the repository with its submodules:
 
 ```powershell
 git clone --recurse-submodules https://github.com/fenghuayumo/photara_drender.git
@@ -29,26 +32,28 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-已有工作区用 `git submodule update --init third_party/UVAtlas` 补上。`PHOTARA_USE_VENDORED_UVATLAS=OFF`
-时改回系统安装包，或在 Windows 上下载微软 `oct2025` 源码包。
+For an existing checkout, initialize UVAtlas with
+`git submodule update --init third_party/UVAtlas`. Setting `PHOTARA_USE_VENDORED_UVATLAS=OFF`
+uses an installed package instead, or downloads Microsoft's `oct2025` source release on Windows.
 
-相关选项：
+Build options:
 
-- `PHOTARA_ENABLE_UVATLAS=OFF`：只构建渲染和投影模块；
-- `PHOTARA_USE_VENDORED_UVATLAS=OFF`：不用 submodule，改走系统包或 `PHOTARA_FETCH_UVATLAS`；
-- `PHOTARA_FETCH_UVATLAS=OFF`：要求环境中存在 `uvatlas` CMake package；
-- `PHOTARA_UVATLAS_USE_OPENMP=ON`：启用 UVAtlas 上游的 OpenMP chart 参数化；
-- `PHOTARA_BUILD_MESH_TOOLS=ON`：构建使用 CGAL 的流形修复与 Decimation 工具；
-- `PHOTARA_ENABLE_VALIDATION=ON`：启用 Vulkan validation layer。
+- `PHOTARA_ENABLE_UVATLAS=OFF`: build only the rendering and projection modules.
+- `PHOTARA_USE_VENDORED_UVATLAS=OFF`: use an installed package or `PHOTARA_FETCH_UVATLAS` instead of the submodule.
+- `PHOTARA_FETCH_UVATLAS=OFF`: require an installed `uvatlas` CMake package.
+- `PHOTARA_UVATLAS_USE_OPENMP=ON`: enable upstream UVAtlas OpenMP chart parameterization.
+- `PHOTARA_BUILD_MESH_TOOLS=ON`: build the CGAL manifold repair and mesh decimation tools.
+- `PHOTARA_ENABLE_VALIDATION=ON`: enable Vulkan validation layers.
 
-Python wheel 可以使用 `python -m pip wheel .` 构建。
-Windows wheel 默认将 VC++ Release 运行时和 Vulkan loader DLL 安装到 Python 包目录，
-导入时自动注册 DLL 搜索路径。无需另行安装 VC++ Redistributable 或 Vulkan SDK；
-仍需目标机器安装支持 Vulkan 的显卡驱动，以及与 wheel 匹配的 Python。
-构建时可用 `PHOTARA_VULKAN_RUNTIME_DLL` 指定 loader，或用
-`PHOTARA_BUNDLE_WINDOWS_RUNTIME=OFF` 禁用运行库打包。
+Build a Python wheel with `python -m pip wheel .`.
+Windows wheels include the VC++ Release runtime and Vulkan loader DLLs in the Python package
+directory by default and register the DLL search path on import. A separate VC++ Redistributable
+or Vulkan SDK installation is not required to use the wheel. The target machine still needs
+a Vulkan-capable graphics driver and a Python version compatible with the wheel.
+Set `PHOTARA_VULKAN_RUNTIME_DLL` to supply a loader at build time, or set
+`PHOTARA_BUNDLE_WINDOWS_RUNTIME=OFF` to disable runtime bundling.
 
-## UV 展开与纹理投影
+## UV Unwrapping and Texture Projection
 
 ```python
 import numpy as np
@@ -65,7 +70,7 @@ mesh = unwrap_mesh_uv(
 baked = project_texture_atlas(
     mesh,
     images,
-    world_to_clip,       # [view_count, 4, 4]，row-major
+    world_to_clip,       # [view_count, 4, 4], row-major
     camera_positions,    # [view_count, 3]
     visibility_masks=masks,
     resolution=(2048, 2048),
@@ -78,15 +83,17 @@ confidence = baked.confidence
 source_view = baked.source_view
 ```
 
-输入照片和输出 atlas 均为 `[height, width, channels]` float32，数组第 0 行对应图像顶部。使用
-`load_colmap_projection()` 时可直接传入 OpenCV/PIL 图像，无需垂直翻转。详细矩阵与 viewport 约定见
-[纹理烘焙指南](docs/texture_baking.md)。
+Input images and output atlases are float32 arrays with shape `[height, width, channels]`;
+row 0 corresponds to the top of the image. When using `load_colmap_projection()`, pass
+OpenCV/PIL images directly without flipping them vertically. See the
+[texture baking guide](docs/texture_baking.md) for matrix and viewport conventions.
 
-## 扫描 mesh 完整流水线
+## Complete Pipeline for Scanned Meshes
 
-`prepare_mesh_for_baking()` / C++ `photara_mesh::prepare_for_baking()` 在内存中完成
-CGAL 流形修复、保边界 Decimation 和并行 UVAtlas，不再经中间 PLY/子进程。质量档位为
-`high=100万`（默认）、`medium=50万`、`low=10万` 面；Instant Meshes 可按需开启。
+`prepare_mesh_for_baking()` and C++ `photara_mesh::prepare_for_baking()` perform CGAL manifold
+repair, boundary-preserving decimation, and parallel UVAtlas unwrapping in memory, without
+intermediate PLY files or subprocesses. Quality presets target `high=1,000,000` triangles
+(the default), `medium=500,000`, and `low=100,000`. Instant Meshes can be enabled as needed.
 
 ```python
 prepared = prepare_mesh_for_baking(
@@ -109,20 +116,26 @@ baked = project_texture_atlas(
 )
 ```
 
-预处理命令行见 `examples/prepare_mesh.py`，烘焙命令行见 `examples/bake_colmap.py`，拓扑保证和构建方式见
-[mesh 预处理说明](docs/mesh_preprocessing.md)。
+See `examples/prepare_mesh.py` for the preprocessing CLI and `examples/bake_colmap.py` for
+the baking CLI. The [mesh preprocessing guide](docs/mesh_preprocessing.md) describes topology
+guarantees and build instructions.
 
-## 可微 atlas 优化
+## Differentiable Atlas Optimization
 
-生产路径在内存中完成 ray-query bake 后，立即使用 C++ `TextureRefiner` 在 Vulkan 中执行默认 1000 步 masked
-photometric Adam 与 seam polish，最后只导出优化后的模型；`--no-optimize` 才导出未优化贴图。COLMAP 示例默认读取
-`images_delighted`，也可用 `--texture-source rgb` 明确选择原始 RGB；烘焙和优化会校验使用同一种图像源。
-前景 mask 同时用于优化损失和最终 masked difference 图。PyTorch `optimize_texture_atlas()` 仅保留为研究接口。
-详见 [可微纹理图集优化](docs/texture_atlas.md)。
+After baking with ray queries in memory, the production pipeline immediately runs C++
+`TextureRefiner` on Vulkan. By default, it performs 1,000 masked photometric Adam optimization
+steps followed by seam polishing, then exports only the optimized model. Use `--no-optimize`
+to export the unoptimized texture instead.
 
-## 当前边界
+The COLMAP example uses `images_delighted` by default. Set `--texture-source rgb` to select
+the original RGB images explicitly. Baking and optimization validate that they use the same
+image source. Foreground masks are applied to both the optimization loss and the final masked
+difference image. PyTorch `optimize_texture_atlas()` remains available as a research interface.
+See [differentiable texture atlas optimization](docs/texture_atlas.md) for details.
 
-- 纹理投影本身是离散初始化过程，不对 shadow/ray visibility 求导；生成的 atlas 可进入现有可微优化器。
-- 光栅器尚未实现跨近裁剪面的齐次裁剪。
-- mipmapped/trilinear 可微采样和轮廓抗锯齿仍是后续质量模块。
-- 当前使用同步 host-visible buffer；大场景吞吐还需要 device-local 资源池、异步批处理和 PyTorch 零拷贝。
+## Current Limitations
+
+- Texture projection is a discrete initialization step; shadow and ray visibility are not differentiated. The resulting atlas can be passed to the existing differentiable optimizers.
+- The rasterizer does not yet implement homogeneous clipping across the near clipping plane.
+- Differentiable mipmapped/trilinear sampling and silhouette antialiasing remain planned quality improvements.
+- Buffers are currently synchronous and host-visible. Higher throughput for large scenes still requires device-local resource pools, asynchronous batching, and zero-copy PyTorch integration.
