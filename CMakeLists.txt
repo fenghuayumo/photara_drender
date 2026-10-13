@@ -239,6 +239,12 @@ if(PHOTARA_BUILD_NATIVE_TESTS)
     add_executable(photara_native_tests tests/native_tests.cpp)
     target_link_libraries(photara_native_tests PRIVATE photara::render)
     add_test(NAME photara_native_tests COMMAND photara_native_tests)
+    add_executable(photara_uv_partition_pack_tests tests/uv_partition_pack_test.cpp)
+    target_link_libraries(photara_uv_partition_pack_tests PRIVATE photara::render)
+    add_test(NAME photara_uv_partition_pack_tests COMMAND photara_uv_partition_pack_tests)
+    add_executable(photara_texture_surface_fill_tests tests/texture_surface_fill_test.cpp)
+    target_link_libraries(photara_texture_surface_fill_tests PRIVATE photara::render)
+    add_test(NAME photara_texture_surface_fill_tests COMMAND photara_texture_surface_fill_tests)
     if(PHOTARA_BUILD_PYTHON_BINDINGS)
         add_test(
             NAME photara_python_smoke

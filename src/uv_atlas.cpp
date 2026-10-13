@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <exception>
 #include <limits>
@@ -412,6 +413,62 @@ UvAtlasOutput unwrap_uv_parallel(
         std::rethrow_exception(worker_error);
     }
 
+    // Global packing becomes prohibitively slow for scans with many tiny
+    // charts. Pack the existing partitions concurrently into disjoint tiles;
+    // this changes UV allocation only, never mesh geometry or face ordering.
+    const auto total_charts = std::accumulate(
+        partition_outputs.begin(), partition_outputs.end(), std::size_t{0},
+        [](std::size_t count, const PartitionOutput& partition) {
+            return count + partition.chart_count;
+        });
+    const bool tiled_packing = total_charts > 4'096 && partition_outputs.size() > 1;
+    if (tiled_packing) {
+        const auto columns = static_cast<std::uint32_t>(
+            std::ceil(std::sqrt(static_cast<double>(partition_outputs.size()))));
+        const auto rows = static_cast<std::uint32_t>(
+            (partition_outputs.size() + columns - 1) / columns);
+        const auto tile_width = options.width / columns;
+        const auto tile_height = options.height / rows;
+        if (tile_width == 0 || tile_height == 0)
+            throw std::invalid_argument("UV atlas is too small for partition packing");
+        std::fprintf(stderr, "[uvatlas] packing %zu charts in %zu tiles (%ux%u grid)\n",
+            total_charts, partition_outputs.size(), columns, rows);
+        next_partition.store(0);
+        worker_error = nullptr;
+        for (std::size_t worker = 0; worker < worker_count; ++worker) {
+            workers.emplace_back([&] {
+                try {
+                    while (true) {
+                        const auto partition_id = next_partition.fetch_add(1);
+                        if (partition_id >= partition_outputs.size()) break;
+                        auto& partition = partition_outputs[partition_id];
+                        auto bytes = encode_indices(partition.indices);
+                        const auto result = DirectX::UVAtlasPack(
+                            partition.vertices, bytes, DXGI_FORMAT_R32_UINT,
+                            tile_width, tile_height, options.gutter, partition.adjacency,
+                            {}, DirectX::UVATLAS_DEFAULT_CALLBACK_FREQUENCY);
+                        if (FAILED(result))
+                            throw std::runtime_error("UVAtlas partition packing failed with HRESULT " +
+                                std::to_string(result));
+                        partition.indices = decode_indices(bytes);
+                        const auto column = static_cast<std::uint32_t>(partition_id % columns);
+                        const auto row = static_cast<std::uint32_t>(partition_id / columns);
+                        for (auto& vertex : partition.vertices) {
+                            vertex.uv.x = (column + vertex.uv.x) * tile_width / options.width;
+                            vertex.uv.y = (row + vertex.uv.y) * tile_height / options.height;
+                        }
+                    }
+                } catch (...) {
+                    std::scoped_lock lock(error_mutex);
+                    if (!worker_error) worker_error = std::current_exception();
+                    next_partition.store(partition_outputs.size());
+                }
+            });
+        }
+        workers.clear();
+        if (worker_error) std::rethrow_exception(worker_error);
+    }
+
     std::vector<DirectX::UVAtlasVertex> combined_vertices;
     std::vector<std::uint32_t> combined_indices;
     std::vector<std::uint32_t> combined_adjacency;
@@ -461,7 +518,7 @@ UvAtlasOutput unwrap_uv_parallel(
     }
 
     auto combined_index_bytes = encode_indices(combined_indices);
-    const HRESULT pack_result = DirectX::UVAtlasPack(
+    const HRESULT pack_result = tiled_packing ? S_OK : DirectX::UVAtlasPack(
         combined_vertices,
         combined_index_bytes,
         DXGI_FORMAT_R32_UINT,

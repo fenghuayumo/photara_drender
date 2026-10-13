@@ -7,6 +7,21 @@
 
 namespace photara_drender {
 
+struct SurfaceFillStats {
+    std::uint64_t filled_texels = 0;
+    std::uint64_t remaining_texels = 0;
+    std::uint64_t measured_faces = 0;
+    std::uint64_t propagated_faces = 0;
+};
+
+// Preserve measured texels; fill missing texels with the measured mean of their
+// face, or the closest observed face by shared-edge graph distance. Indices must
+// use the original mesh vertices (before UV seam duplication). Disconnected
+// components without observations remain empty. Extrapolated colours are an
+// initialization, not recovered photographic detail.
+[[nodiscard]] SurfaceFillStats fill_texture_on_surface(
+    TextureBakeOutput& output, std::span<const std::uint32_t> triangle_indices);
+
 // Atlas gutter/guard fill. Colour is extrapolated from texels that received a
 // real projection sample into
 //   * the empty gutter around every chart (within `margin` texels), and
@@ -42,8 +57,9 @@ struct TexturePaddingStats {
 };
 
 // Extends `output.color` in place and records the guard texels in
-// output.filled_mask. output.valid_mask keeps its projection-valid meaning and
-// is never widened, so callers can still tell measured texels from guard texels.
+// output.filled_mask. Existing covered fills from fill_texture_on_surface are
+// preserved and also seed gutters. output.valid_mask keeps its projection-valid
+// meaning and is never widened, so measured and extrapolated texels stay distinct.
 [[nodiscard]] TexturePaddingStats pad_texture_atlas(
     TextureBakeOutput& output, const TexturePaddingOptions& options = {});
 

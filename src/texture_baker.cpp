@@ -193,9 +193,13 @@ TextureBakeOutput TextureBaker::bake(
     // Chart coverage: the atlas rasterizer stores the covered triangle index in
     // the fourth component, so uncovered texels are exactly the zero entries.
     std::vector<float> coverage_mask(atlas_pixel_count, 0.0F);
+    std::vector<std::uint32_t> face_ids(atlas_pixel_count, UINT32_MAX);
     if (atlas_raster.raster.size() == atlas_pixel_count * 4) {
         for (std::size_t pixel = 0; pixel < atlas_pixel_count; ++pixel) {
             coverage_mask[pixel] = std::round(atlas_raster.raster[pixel * 4 + 3]) != 0.0F ? 1.0F : 0.0F;
+            if (coverage_mask[pixel] > 0.5F)
+                face_ids[pixel] = static_cast<std::uint32_t>(
+                    std::round(atlas_raster.raster[pixel * 4 + 3])) - 1U;
         }
     }
 
@@ -335,6 +339,7 @@ TextureBakeOutput TextureBaker::bake(
     output.source_view.resize(atlas_pixel_count);
     output.valid_mask.resize(atlas_pixel_count);
     output.coverage_mask = std::move(coverage_mask);
+    output.face_ids = std::move(face_ids);
     std::vector<float> accumulated_color(atlas_pixel_count * 3);
     accumulated_color_buffer.download(accumulated_color.data(), accumulated_color.size() * sizeof(float));
     accumulated_weight_buffer.download(output.confidence.data(), output.confidence.size() * sizeof(float));

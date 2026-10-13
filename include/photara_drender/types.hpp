@@ -189,6 +189,9 @@ struct TextureBakeOutput {
     // Rasterized chart coverage (1 = the atlas rasterizer wrote the texel).
     // Empty for outputs produced before the coverage report was added.
     std::vector<float> coverage_mask;
+    // Zero-based mesh face at each covered texel; UINT32_MAX outside the mesh.
+    // Allows colour extrapolation over mesh edges rather than across UV islands.
+    std::vector<std::uint32_t> face_ids;
     // Texels whose color was extrapolated by pad_texture_atlas(). Empty when
     // padding has not run.
     std::vector<float> filled_mask;

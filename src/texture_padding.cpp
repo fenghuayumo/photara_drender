@@ -1,6 +1,7 @@
 #include "photara_drender/texture_padding.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -96,6 +97,93 @@ void build_nearest_field(NearestField& field, std::span<const float> valid_mask,
 
 } // namespace
 
+SurfaceFillStats fill_texture_on_surface(
+    TextureBakeOutput& output, std::span<const std::uint32_t> triangle_indices) {
+    const auto pixels = static_cast<std::size_t>(output.width) * output.height;
+    if (pixels == 0 || triangle_indices.empty() || triangle_indices.size() % 3 != 0 ||
+        output.face_ids.size() != pixels || output.valid_mask.size() != pixels ||
+        output.color.size() % pixels != 0)
+        throw std::invalid_argument("surface fill requires mesh face IDs and a valid atlas");
+    const auto channels = output.color.size() / pixels;
+    if (channels != 3 && channels != 4)
+        throw std::invalid_argument("surface fill requires RGB or RGBA colours");
+    const auto faces = triangle_indices.size() / 3;
+    constexpr auto none = UINT32_MAX;
+    if (faces >= none)
+        throw std::invalid_argument("surface fill has too many faces");
+    std::vector<std::array<double, 3>> means(faces);
+    std::vector<std::uint32_t> counts(faces, 0);
+    for (std::size_t pixel = 0; pixel < pixels; ++pixel) {
+        const auto face = output.face_ids[pixel];
+        if (face == none) continue;
+        if (face >= faces) throw std::invalid_argument("atlas face ID is out of range");
+        if (output.valid_mask[pixel] < 0.5F) continue;
+        ++counts[face];
+        for (std::size_t channel = 0; channel < 3; ++channel)
+            means[face][channel] += output.color[pixel * channels + channel];
+    }
+    struct Edge { std::uint64_t key; std::uint32_t face; std::uint32_t slot; };
+    std::vector<Edge> edges;
+    edges.reserve(triangle_indices.size());
+    for (std::uint32_t face = 0; face < faces; ++face) {
+        for (std::uint32_t edge = 0; edge < 3; ++edge) {
+            const auto a = triangle_indices[face * 3 + edge];
+            const auto b = triangle_indices[face * 3 + (edge + 1) % 3];
+            if (a == b) throw std::invalid_argument("surface fill mesh has a degenerate edge");
+            edges.push_back({(static_cast<std::uint64_t>(std::min(a, b)) << 32U) |
+                std::max(a, b), face, edge});
+        }
+    }
+    std::sort(edges.begin(), edges.end(), [](const auto& a, const auto& b) {
+        return a.key < b.key;
+    });
+    std::vector<std::array<std::uint32_t, 3>> neighbours(faces, {none, none, none});
+    for (std::size_t begin = 0; begin < edges.size();) {
+        auto end = begin + 1;
+        while (end < edges.size() && edges[end].key == edges[begin].key) ++end;
+        if (end - begin > 2)
+            throw std::invalid_argument("surface fill requires manifold edges");
+        if (end - begin == 2) {
+            neighbours[edges[begin].face][edges[begin].slot] = edges[begin + 1].face;
+            neighbours[edges[begin + 1].face][edges[begin + 1].slot] = edges[begin].face;
+        }
+        begin = end;
+    }
+    std::vector<std::uint32_t> sources(faces, none), queue;
+    queue.reserve(faces);
+    SurfaceFillStats stats;
+    for (std::uint32_t face = 0; face < faces; ++face) {
+        if (counts[face] == 0) continue;
+        for (auto& channel : means[face]) channel /= counts[face];
+        sources[face] = face;
+        queue.push_back(face);
+        ++stats.measured_faces;
+    }
+    // Multi-source BFS crosses UV seams through original shared mesh edges.
+    for (std::size_t head = 0; head < queue.size(); ++head) {
+        const auto face = queue[head];
+        for (const auto next : neighbours[face]) {
+            if (next == none || sources[next] != none) continue;
+            sources[next] = sources[face];
+            queue.push_back(next);
+            ++stats.propagated_faces;
+        }
+    }
+    if (output.filled_mask.size() != pixels) output.filled_mask.assign(pixels, 0.0F);
+    for (std::size_t pixel = 0; pixel < pixels; ++pixel) {
+        const auto face = output.face_ids[pixel];
+        if (face == none || output.valid_mask[pixel] >= 0.5F) continue;
+        const auto source = sources[face];
+        if (source == none) { ++stats.remaining_texels; continue; }
+        for (std::size_t channel = 0; channel < 3; ++channel)
+            output.color[pixel * channels + channel] = static_cast<float>(means[source][channel]);
+        if (channels == 4) output.color[pixel * channels + 3] = 1.0F;
+        output.filled_mask[pixel] = 1.0F;
+        ++stats.filled_texels;
+    }
+    return stats;
+}
+
 float suggest_softmax_scale(
     std::span<const float> positions,
     std::span<const float> camera_positions) {
@@ -164,13 +252,25 @@ TexturePaddingStats pad_texture_atlas(
     }
 
     TexturePaddingStats stats;
-    output.filled_mask.assign(pixel_count, 0.0F);
+    const bool has_coverage = output.coverage_mask.size() == pixel_count;
+    if (output.filled_mask.size() != pixel_count)
+        output.filled_mask.assign(pixel_count, 0.0F);
+    auto source_mask = output.valid_mask;
     for (std::size_t pixel = 0; pixel < pixel_count; ++pixel) {
         if (valid_source(output.valid_mask, pixel, options.valid_threshold)) {
             ++stats.valid_texels;
+        } else if (output.filled_mask[pixel] > 0.5F && has_coverage &&
+                   output.coverage_mask[pixel] > 0.5F) {
+            source_mask[pixel] = 1.0F;
+            ++stats.unobserved_texels;
+            ++stats.filled_texels;
+        } else {
+            // Previous gutters are not new sources: repeated padding must not
+            // grow the margin or misclassify guards as filled mesh texels.
+            output.filled_mask[pixel] = 0.0F;
         }
     }
-    if (stats.valid_texels == 0) {
+    if (stats.valid_texels == 0 && stats.filled_texels == 0) {
         // Nothing to extrapolate from; keep the atlas untouched.
         stats.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
         return stats;
@@ -181,9 +281,8 @@ TexturePaddingStats pad_texture_atlas(
     field.height = static_cast<std::int32_t>(height);
     field.offset_x.assign(pixel_count, 0);
     field.offset_y.assign(pixel_count, 0);
-    build_nearest_field(field, output.valid_mask, options.valid_threshold);
+    build_nearest_field(field, source_mask, options.valid_threshold);
 
-    const bool has_coverage = output.coverage_mask.size() == pixel_count;
     const std::int64_t margin_squared = static_cast<std::int64_t>(options.margin) * options.margin;
     const std::int64_t fill_limit_squared =
         options.maximum_fill_distance == 0
@@ -197,7 +296,7 @@ TexturePaddingStats pad_texture_atlas(
     for (std::uint32_t y = 0; y < height; ++y) {
         for (std::uint32_t x = 0; x < width; ++x) {
             const std::size_t pixel = static_cast<std::size_t>(y) * width + x;
-            if (valid_source(output.valid_mask, pixel, options.valid_threshold)) {
+            if (valid_source(source_mask, pixel, options.valid_threshold)) {
                 continue;
             }
             const std::int32_t offset_x = field.offset_x[pixel];

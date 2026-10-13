@@ -347,6 +347,12 @@ int main() {
             world_positions, world_normals, bake_uv, indices,
             std::span<const photara_drender::ProjectionView>(&projection_view, 1), bake_options);
         require(baked.color.size() == 16 * 16 * 4, "Unexpected baked atlas size");
+        require(baked.face_ids.size() == baked.coverage_mask.size(),
+                "Texture bake did not retain rasterized face IDs");
+        for (std::size_t pixel = 0; pixel < baked.face_ids.size(); ++pixel)
+            require(baked.face_ids[pixel] ==
+                (baked.coverage_mask[pixel] > 0.5F ? 0U : UINT32_MAX),
+                "Rasterized face IDs do not match single-triangle coverage");
         require(std::ranges::any_of(baked.valid_mask, [](float value) { return value > 0.5F; }),
                 "Texture projection did not produce valid atlas texels");
         if (context.device_info().supports_ray_query) {
