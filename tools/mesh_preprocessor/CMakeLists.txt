@@ -62,8 +62,15 @@ if(WIN32)
 endif()
 
 if(PHOTARA_BUILD_PYTHON_BINDINGS)
-    pybind11_add_module(_photara_mesh src/python_bindings.cpp)
-    target_link_libraries(_photara_mesh PRIVATE photara::mesh Python::NumPy)
+    if(NOT COMMAND nanobind_add_module)
+        find_package(Python 3.10 REQUIRED COMPONENTS Interpreter Development.Module)
+        set(NB_TEST OFF CACHE BOOL "Compile nanobind tests" FORCE)
+        add_subdirectory(
+            "${CMAKE_CURRENT_LIST_DIR}/../../third_party/nanobind"
+            "${CMAKE_CURRENT_BINARY_DIR}/nanobind")
+    endif()
+    nanobind_add_module(_photara_mesh src/python_bindings.cpp)
+    target_link_libraries(_photara_mesh PRIVATE photara::mesh)
     set_target_properties(_photara_mesh PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python/photara_drender"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python/photara_drender")

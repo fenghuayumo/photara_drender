@@ -2,3 +2,7 @@
 	path = third_party/UVAtlas
 	url = https://github.com/fenghuayumo/UVAtlas.git
 	branch = main
+[submodule "third_party/nanobind"]
+	path = third_party/nanobind
+	url = https://github.com/wjakob/nanobind.git
+	branch = master

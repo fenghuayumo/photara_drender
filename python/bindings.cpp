@@ -8,35 +8,59 @@
 #include <string>
 #include <utility>
 
-#include <pybind11/numpy.h>
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
+#include <nanobind/nanobind.h>
+#include <nanobind/ndarray.h>
+#include <nanobind/stl/array.h>
+#include <nanobind/stl/optional.h>
+#include <nanobind/stl/pair.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
 
 #include "photara_drender/photara_drender.hpp"
 
-namespace py = pybind11;
+namespace py = nanobind;
 using namespace photara_drender;
 
 namespace {
 
+using FloatInput = py::ndarray<const float, py::numpy, py::c_contig>;
+using U32Input = py::ndarray<const std::uint32_t, py::numpy, py::c_contig>;
+using FloatOutput = py::ndarray<float, py::numpy>;
+using U32Output = py::ndarray<std::uint32_t, py::numpy>;
+
+struct BufferInfo {
+    std::size_t ndim;
+    std::vector<py::ssize_t> shape;
+};
+
+template <typename... Args>
+BufferInfo request(const py::ndarray<Args...>& array) {
+    BufferInfo info{array.ndim(), {}};
+    info.shape.reserve(info.ndim);
+    for (std::size_t i = 0; i < info.ndim; ++i) {
+        info.shape.push_back(static_cast<py::ssize_t>(array.shape(i)));
+    }
+    return info;
+}
+
 template <typename T>
-std::span<const T> as_span(const py::array_t<T, py::array::c_style | py::array::forcecast>& array) {
+std::span<const T> as_span(const py::ndarray<const T, py::numpy, py::c_contig>& array) {
     return {array.data(), static_cast<std::size_t>(array.size())};
 }
 
-void validate_positions(const py::buffer_info& info) {
+void validate_positions(const BufferInfo& info) {
     if (info.ndim != 2 || info.shape[1] != 4 || info.shape[0] <= 0) {
         throw std::invalid_argument("positions must have shape [vertex_count, 4]");
     }
 }
 
-void validate_indices(const py::buffer_info& info) {
+void validate_indices(const BufferInfo& info) {
     if (info.ndim != 2 || info.shape[1] != 3 || info.shape[0] <= 0) {
         throw std::invalid_argument("indices must have shape [triangle_count, 3]");
     }
 }
 
-void validate_image(const py::buffer_info& info, std::uint32_t width, std::uint32_t height, const char* name) {
+void validate_image(const BufferInfo& info, std::uint32_t width, std::uint32_t height, const char* name) {
     if (info.ndim != 3 || info.shape[0] != height || info.shape[1] != width || info.shape[2] != 4) {
         throw std::invalid_argument(std::string(name) + " must have shape [height, width, 4]");
     }
@@ -68,49 +92,55 @@ AddressMode parse_address_mode(const std::string& value) {
     throw std::invalid_argument("address_mode must be 'clamp', 'wrap', or 'mirror'");
 }
 
-py::array_t<float> vector_to_array(std::vector<float>&& values, const std::vector<py::ssize_t>& shape) {
-    py::array_t<float> array(shape);
-    if (!values.empty()) {
-        std::memcpy(array.mutable_data(), values.data(), values.size() * sizeof(float));
+template <typename T, typename Array>
+Array vector_to_array(std::vector<T>&& values, const std::vector<py::ssize_t>& shape) {
+    auto* data = new std::vector<T>(std::move(values));
+    py::capsule owner(data, [](void* pointer) noexcept {
+        delete static_cast<std::vector<T>*>(pointer);
+    });
+    std::vector<std::size_t> dimensions;
+    dimensions.reserve(shape.size());
+    for (const auto dimension : shape) {
+        dimensions.push_back(static_cast<std::size_t>(dimension));
     }
-    return array;
+    return Array(data->data(), dimensions.size(), dimensions.data(), owner);
 }
 
-py::array_t<std::uint32_t> vector_to_u32_array(
+FloatOutput vector_to_array(std::vector<float>&& values, const std::vector<py::ssize_t>& shape) {
+    return vector_to_array<float, FloatOutput>(std::move(values), shape);
+}
+
+U32Output vector_to_u32_array(
     std::vector<std::uint32_t>&& values,
     const std::vector<py::ssize_t>& shape) {
-    py::array_t<std::uint32_t> array(shape);
-    if (!values.empty()) {
-        std::memcpy(array.mutable_data(), values.data(), values.size() * sizeof(std::uint32_t));
-    }
-    return array;
+    return vector_to_array<std::uint32_t, U32Output>(std::move(values), shape);
 }
 
 class PythonUvAtlasResult {
 public:
     explicit PythonUvAtlasResult(UvAtlasOutput output) : output_(std::move(output)) {}
 
-    py::array_t<float> positions() const {
+    FloatOutput positions() const {
         auto values = output_.positions;
         return vector_to_array(std::move(values), {static_cast<py::ssize_t>(output_.positions.size() / 3), 3});
     }
 
-    py::array_t<float> uv() const {
+    FloatOutput uv() const {
         auto values = output_.uv;
         return vector_to_array(std::move(values), {static_cast<py::ssize_t>(output_.uv.size() / 2), 2});
     }
 
-    py::array_t<std::uint32_t> indices() const {
+    U32Output indices() const {
         auto values = output_.indices;
         return vector_to_u32_array(std::move(values), {static_cast<py::ssize_t>(output_.indices.size() / 3), 3});
     }
 
-    py::array_t<std::uint32_t> vertex_remap() const {
+    U32Output vertex_remap() const {
         auto values = output_.vertex_remap;
         return vector_to_u32_array(std::move(values), {static_cast<py::ssize_t>(output_.vertex_remap.size())});
     }
 
-    py::array_t<std::uint32_t> face_chart_ids() const {
+    U32Output face_chart_ids() const {
         auto values = output_.face_chart_ids;
         return vector_to_u32_array(std::move(values), {static_cast<py::ssize_t>(output_.face_chart_ids.size())});
     }
@@ -129,13 +159,13 @@ public:
         : context_(ContextOptions{device_index, enable_validation}), baker_(context_), refiner_(context_) {}
 
     py::tuple bake(
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& positions,
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& normals,
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& uv,
-        const py::array_t<std::uint32_t, py::array::c_style | py::array::forcecast>& indices,
+        const FloatInput& positions,
+        const FloatInput& normals,
+        const FloatInput& uv,
+        const U32Input& indices,
         const py::list& images,
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& world_to_clip,
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& camera_positions,
+        const FloatInput& world_to_clip,
+        const FloatInput& camera_positions,
         const py::object& visibility_masks,
         const py::object& viewports,
         const std::pair<std::uint32_t, std::uint32_t>& resolution,
@@ -145,21 +175,21 @@ public:
         bool allow_visibility_fallback,
         float softmax_scale,
         float mask_floor) {
-        const auto position_info = positions.request();
+        const auto position_info = request(positions);
         if (position_info.ndim != 2 || position_info.shape[1] != 3 || position_info.shape[0] <= 0) {
             throw std::invalid_argument("positions must have shape [vertex_count, 3]");
         }
-        const auto normal_info = normals.request();
-        const auto uv_info = uv.request();
+        const auto normal_info = request(normals);
+        const auto uv_info = request(uv);
         if (normal_info.ndim != 2 || normal_info.shape[0] != position_info.shape[0] || normal_info.shape[1] != 3) {
             throw std::invalid_argument("normals must have shape [vertex_count, 3]");
         }
         if (uv_info.ndim != 2 || uv_info.shape[0] != position_info.shape[0] || uv_info.shape[1] != 2) {
             throw std::invalid_argument("uv must have shape [vertex_count, 2]");
         }
-        validate_indices(indices.request());
-        const auto matrix_info = world_to_clip.request();
-        const auto camera_info = camera_positions.request();
+        validate_indices(request(indices));
+        const auto matrix_info = request(world_to_clip);
+        const auto camera_info = request(camera_positions);
         const auto view_count = static_cast<py::ssize_t>(images.size());
         if (view_count <= 0 || matrix_info.ndim != 3 || matrix_info.shape[0] != view_count ||
             matrix_info.shape[1] != 4 || matrix_info.shape[2] != 4) {
@@ -185,8 +215,8 @@ public:
 
         std::vector<ProjectionView> projection_views(static_cast<std::size_t>(view_count));
         for (py::ssize_t index = 0; index < view_count; ++index) {
-            const auto image = py::cast<py::array_t<float, py::array::c_style | py::array::forcecast>>(images[index]);
-            const auto image_info = image.request();
+            const auto image = py::cast<FloatInput>(images[index]);
+            const auto image_info = request(image);
             if (image_info.ndim != 3 || image_info.shape[0] <= 0 || image_info.shape[1] <= 0 ||
                 (image_info.shape[2] != 3 && image_info.shape[2] != 4)) {
                 throw std::invalid_argument("each image must have shape [height, width, 3 or 4]");
@@ -199,8 +229,8 @@ public:
             std::copy_n(world_to_clip.data() + index * 16, 16, view.world_to_clip.begin());
             std::copy_n(camera_positions.data() + index * 3, 3, view.camera_position.begin());
             if (!visibility_masks.is_none() && !mask_list[index].is_none()) {
-                const auto mask = py::cast<py::array_t<float, py::array::c_style | py::array::forcecast>>(mask_list[index]);
-                const auto mask_info = mask.request();
+                const auto mask = py::cast<FloatInput>(mask_list[index]);
+                const auto mask_info = request(mask);
                 if (mask_info.ndim != 2 || mask_info.shape[0] != image_info.shape[0] ||
                     mask_info.shape[1] != image_info.shape[1]) {
                     throw std::invalid_argument("each visibility mask must have shape [image_height, image_width]");
@@ -257,12 +287,12 @@ public:
     }
 
     py::tuple refine_texture(
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& initial_texture,
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& positions,
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& uv,
-        const py::array_t<std::uint32_t, py::array::c_style | py::array::forcecast>& indices,
+        const FloatInput& initial_texture,
+        const FloatInput& positions,
+        const FloatInput& uv,
+        const U32Input& indices,
         const py::list& images,
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& world_to_clip,
+        const FloatInput& world_to_clip,
         const py::object& visibility_masks,
         const py::object& viewports,
         const py::object& seam_uv_pairs,
@@ -273,19 +303,19 @@ public:
         float photometric_epsilon,
         std::uint32_t seam_polish_steps,
         float seam_learning_rate) {
-        const auto texture_info = initial_texture.request();
+        const auto texture_info = request(initial_texture);
         if (texture_info.ndim != 3 || texture_info.shape[0] <= 0 || texture_info.shape[1] <= 0 ||
             texture_info.shape[2] != 3) {
             throw std::invalid_argument("initial_texture must have shape [height, width, 3]");
         }
-        const auto position_info = positions.request();
-        const auto uv_info = uv.request();
+        const auto position_info = request(positions);
+        const auto uv_info = request(uv);
         if (position_info.ndim != 2 || position_info.shape[0] <= 0 || position_info.shape[1] != 3 ||
             uv_info.ndim != 2 || uv_info.shape[0] != position_info.shape[0] || uv_info.shape[1] != 2) {
             throw std::invalid_argument("positions and uv must have shapes [vertex_count, 3] and [vertex_count, 2]");
         }
-        validate_indices(indices.request());
-        const auto matrix_info = world_to_clip.request();
+        validate_indices(request(indices));
+        const auto matrix_info = request(world_to_clip);
         const auto view_count = static_cast<py::ssize_t>(images.size());
         if (view_count <= 0 || matrix_info.ndim != 3 || matrix_info.shape[0] != view_count ||
             matrix_info.shape[1] != 4 || matrix_info.shape[2] != 4) {
@@ -307,8 +337,8 @@ public:
         }
         std::vector<ProjectionView> projection_views(static_cast<std::size_t>(view_count));
         for (py::ssize_t index = 0; index < view_count; ++index) {
-            const auto image = py::cast<py::array_t<float, py::array::c_style | py::array::forcecast>>(images[index]);
-            const auto image_info = image.request();
+            const auto image = py::cast<FloatInput>(images[index]);
+            const auto image_info = request(image);
             if (image_info.ndim != 3 || image_info.shape[0] <= 0 || image_info.shape[1] <= 0 ||
                 (image_info.shape[2] != 3 && image_info.shape[2] != 4)) {
                 throw std::invalid_argument("each image must have shape [height, width, 3 or 4]");
@@ -320,8 +350,8 @@ public:
             view.image.assign(image.data(), image.data() + image.size());
             std::copy_n(world_to_clip.data() + index * 16, 16, view.world_to_clip.begin());
             if (!visibility_masks.is_none() && !mask_list[index].is_none()) {
-                const auto mask = py::cast<py::array_t<float, py::array::c_style | py::array::forcecast>>(mask_list[index]);
-                const auto mask_info = mask.request();
+                const auto mask = py::cast<FloatInput>(mask_list[index]);
+                const auto mask_info = request(mask);
                 if (mask_info.ndim != 2 || mask_info.shape[0] != image_info.shape[0] ||
                     mask_info.shape[1] != image_info.shape[1]) {
                     throw std::invalid_argument("each visibility mask must match its image dimensions");
@@ -343,11 +373,11 @@ public:
         options.photometric_epsilon = photometric_epsilon;
         options.seam_polish_steps = seam_polish_steps;
         options.seam_learning_rate = seam_learning_rate;
-        py::array_t<float, py::array::c_style | py::array::forcecast> seam_array;
+        FloatInput seam_array;
         std::span<const float> seam_span;
         if (!seam_uv_pairs.is_none()) {
-            seam_array = py::cast<py::array_t<float, py::array::c_style | py::array::forcecast>>(seam_uv_pairs);
-            const auto seam_info = seam_array.request();
+            seam_array = py::cast<FloatInput>(seam_uv_pairs);
+            const auto seam_info = request(seam_array);
             if (seam_info.ndim != 3 || seam_info.shape[1] != 2 || seam_info.shape[2] != 2) {
                 throw std::invalid_argument("seam_uv_pairs must have shape [pair_count, 2, 2]");
             }
@@ -387,14 +417,14 @@ public:
         : context_(ContextOptions{device_index, enable_validation}), rasterizer_(context_) {}
 
     py::tuple forward(
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& positions,
-        const py::array_t<std::uint32_t, py::array::c_style | py::array::forcecast>& indices,
+        const FloatInput& positions,
+        const U32Input& indices,
         const std::pair<std::uint32_t, std::uint32_t>& resolution,
         const std::string& cull_mode,
         bool output_barycentric_derivatives,
         const std::optional<std::array<float, 4>>& viewport) {
-        validate_positions(positions.request());
-        validate_indices(indices.request());
+        validate_positions(request(positions));
+        validate_indices(request(indices));
         RasterizeOptions options;
         options.height = resolution.first;
         options.width = resolution.second;
@@ -407,33 +437,33 @@ public:
         auto raster = vector_to_array(
             std::move(output.raster),
             {static_cast<py::ssize_t>(options.height), static_cast<py::ssize_t>(options.width), 4});
-        py::array_t<float> derivatives;
+        FloatOutput derivatives;
         if (output_barycentric_derivatives) {
             derivatives = vector_to_array(
                 std::move(output.barycentric_derivatives),
                 {static_cast<py::ssize_t>(options.height), static_cast<py::ssize_t>(options.width), 4});
         } else {
-            derivatives = py::array_t<float>({0, 0, 4});
+            derivatives = vector_to_array(std::vector<float>{}, {0, 0, 4});
         }
         return py::make_tuple(std::move(raster), std::move(derivatives));
     }
 
-    py::array_t<float> backward(
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& positions,
-        const py::array_t<std::uint32_t, py::array::c_style | py::array::forcecast>& indices,
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& raster,
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& grad_raster,
+    FloatOutput backward(
+        const FloatInput& positions,
+        const U32Input& indices,
+        const FloatInput& raster,
+        const FloatInput& grad_raster,
         const std::optional<std::array<float, 4>>& viewport) {
-        const auto position_info = positions.request();
+        const auto position_info = request(positions);
         validate_positions(position_info);
-        validate_indices(indices.request());
-        const auto raster_info = raster.request();
+        validate_indices(request(indices));
+        const auto raster_info = request(raster);
         if (raster_info.ndim != 3 || raster_info.shape[2] != 4) {
             throw std::invalid_argument("raster must have shape [height, width, 4]");
         }
         const auto height = static_cast<std::uint32_t>(raster_info.shape[0]);
         const auto width = static_cast<std::uint32_t>(raster_info.shape[1]);
-        validate_image(grad_raster.request(), width, height, "grad_raster");
+        validate_image(request(grad_raster), width, height, "grad_raster");
         RasterizeOutput forward_output;
         forward_output.width = width;
         forward_output.height = height;
@@ -451,16 +481,16 @@ public:
             {static_cast<py::ssize_t>(position_info.shape[0]), 4});
     }
 
-    py::array_t<float> interpolate_forward(
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& vertex_attributes,
-        const py::array_t<std::uint32_t, py::array::c_style | py::array::forcecast>& indices,
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& raster) {
-        const auto attribute_info = vertex_attributes.request();
+    FloatOutput interpolate_forward(
+        const FloatInput& vertex_attributes,
+        const U32Input& indices,
+        const FloatInput& raster) {
+        const auto attribute_info = request(vertex_attributes);
         if (attribute_info.ndim != 2 || attribute_info.shape[0] <= 0 || attribute_info.shape[1] <= 0) {
             throw std::invalid_argument("vertex_attributes must have shape [vertex_count, attribute_count]");
         }
-        validate_indices(indices.request());
-        const auto raster_info = raster.request();
+        validate_indices(request(indices));
+        const auto raster_info = request(raster);
         if (raster_info.ndim != 3 || raster_info.shape[2] != 4) {
             throw std::invalid_argument("raster must have shape [height, width, 4]");
         }
@@ -483,20 +513,20 @@ public:
     }
 
     py::tuple interpolate_backward(
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& vertex_attributes,
-        const py::array_t<std::uint32_t, py::array::c_style | py::array::forcecast>& indices,
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& raster,
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& grad_interpolated) {
-        const auto attribute_info = vertex_attributes.request();
+        const FloatInput& vertex_attributes,
+        const U32Input& indices,
+        const FloatInput& raster,
+        const FloatInput& grad_interpolated) {
+        const auto attribute_info = request(vertex_attributes);
         if (attribute_info.ndim != 2 || attribute_info.shape[0] <= 0 || attribute_info.shape[1] <= 0) {
             throw std::invalid_argument("vertex_attributes must have shape [vertex_count, attribute_count]");
         }
-        validate_indices(indices.request());
-        const auto raster_info = raster.request();
+        validate_indices(request(indices));
+        const auto raster_info = request(raster);
         if (raster_info.ndim != 3 || raster_info.shape[2] != 4) {
             throw std::invalid_argument("raster must have shape [height, width, 4]");
         }
-        const auto gradient_info = grad_interpolated.request();
+        const auto gradient_info = request(grad_interpolated);
         if (gradient_info.ndim != 3 || gradient_info.shape[0] != raster_info.shape[0] ||
             gradient_info.shape[1] != raster_info.shape[1] || gradient_info.shape[2] != attribute_info.shape[1]) {
             throw std::invalid_argument("grad_interpolated must have shape [height, width, attribute_count]");
@@ -520,18 +550,18 @@ public:
         return py::make_tuple(std::move(grad_attributes), std::move(grad_raster));
     }
 
-    py::array_t<float> texture_forward(
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& texture,
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& uv,
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& raster,
+    FloatOutput texture_forward(
+        const FloatInput& texture,
+        const FloatInput& uv,
+        const FloatInput& raster,
         const std::string& address_mode) {
-        const auto texture_info = texture.request();
+        const auto texture_info = request(texture);
         if (texture_info.ndim != 3 || texture_info.shape[0] <= 0 || texture_info.shape[1] <= 0 ||
             texture_info.shape[2] <= 0) {
             throw std::invalid_argument("texture must have shape [texture_height, texture_width, channel_count]");
         }
-        const auto uv_info = uv.request();
-        const auto raster_info = raster.request();
+        const auto uv_info = request(uv);
+        const auto raster_info = request(raster);
         if (raster_info.ndim != 3 || raster_info.shape[2] != 4) {
             throw std::invalid_argument("raster must have shape [image_height, image_width, 4]");
         }
@@ -560,20 +590,20 @@ public:
     }
 
     py::tuple texture_backward(
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& texture,
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& uv,
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& raster,
-        const py::array_t<float, py::array::c_style | py::array::forcecast>& grad_sampled,
+        const FloatInput& texture,
+        const FloatInput& uv,
+        const FloatInput& raster,
+        const FloatInput& grad_sampled,
         const std::string& address_mode,
         bool compute_uv_gradient) {
-        const auto texture_info = texture.request();
+        const auto texture_info = request(texture);
         if (texture_info.ndim != 3 || texture_info.shape[0] <= 0 || texture_info.shape[1] <= 0 ||
             texture_info.shape[2] <= 0) {
             throw std::invalid_argument("texture must have shape [texture_height, texture_width, channel_count]");
         }
-        const auto uv_info = uv.request();
-        const auto raster_info = raster.request();
-        const auto gradient_info = grad_sampled.request();
+        const auto uv_info = request(uv);
+        const auto raster_info = request(raster);
+        const auto gradient_info = request(grad_sampled);
         if (raster_info.ndim != 3 || raster_info.shape[2] != 4 || uv_info.ndim != 3 ||
             uv_info.shape[0] != raster_info.shape[0] || uv_info.shape[1] != raster_info.shape[1] || uv_info.shape[2] != 2) {
             throw std::invalid_argument("uv and raster dimensions are incompatible");
@@ -617,22 +647,22 @@ private:
 
 } // namespace
 
-PYBIND11_MODULE(_photara_drender, module) {
+NB_MODULE(_photara_drender, module) {
     module.doc() = "Portable differentiable rasterization powered by Vulkan";
 
     py::class_<DeviceInfo>(module, "DeviceInfo")
-        .def_readonly("name", &DeviceInfo::name)
-        .def_readonly("vendor_id", &DeviceInfo::vendor_id)
-        .def_readonly("device_id", &DeviceInfo::device_id)
-        .def_readonly("api_version", &DeviceInfo::api_version)
-        .def_readonly("supports_ray_query", &DeviceInfo::supports_ray_query)
+        .def_ro("name", &DeviceInfo::name)
+        .def_ro("vendor_id", &DeviceInfo::vendor_id)
+        .def_ro("device_id", &DeviceInfo::device_id)
+        .def_ro("api_version", &DeviceInfo::api_version)
+        .def_ro("supports_ray_query", &DeviceInfo::supports_ray_query)
         .def("__repr__", [](const DeviceInfo& info) {
             return "DeviceInfo(name='" + info.name + "', vendor_id=" + std::to_string(info.vendor_id) + ")";
         });
 
     py::class_<PythonRasterizer>(module, "Rasterizer")
         .def(py::init<std::uint32_t, bool>(), py::arg("device_index") = 0, py::arg("enable_validation") = false)
-        .def_property_readonly("device_info", &PythonRasterizer::device_info, py::return_value_policy::reference_internal)
+        .def_prop_ro("device_info", &PythonRasterizer::device_info, py::rv_policy::reference_internal)
         .def(
             "forward",
             &PythonRasterizer::forward,
@@ -681,20 +711,20 @@ PYBIND11_MODULE(_photara_drender, module) {
             py::arg("compute_uv_gradient") = true);
 
     py::class_<PythonUvAtlasResult>(module, "UvAtlasResult")
-        .def_property_readonly("positions", &PythonUvAtlasResult::positions)
-        .def_property_readonly("uv", &PythonUvAtlasResult::uv)
-        .def_property_readonly("indices", &PythonUvAtlasResult::indices)
-        .def_property_readonly("vertex_remap", &PythonUvAtlasResult::vertex_remap)
-        .def_property_readonly("face_chart_ids", &PythonUvAtlasResult::face_chart_ids)
-        .def_property_readonly("chart_count", &PythonUvAtlasResult::chart_count)
-        .def_property_readonly("partition_count", &PythonUvAtlasResult::partition_count)
-        .def_property_readonly("max_stretch", &PythonUvAtlasResult::max_stretch);
+        .def_prop_ro("positions", &PythonUvAtlasResult::positions, py::rv_policy::move)
+        .def_prop_ro("uv", &PythonUvAtlasResult::uv, py::rv_policy::move)
+        .def_prop_ro("indices", &PythonUvAtlasResult::indices, py::rv_policy::move)
+        .def_prop_ro("vertex_remap", &PythonUvAtlasResult::vertex_remap, py::rv_policy::move)
+        .def_prop_ro("face_chart_ids", &PythonUvAtlasResult::face_chart_ids, py::rv_policy::move)
+        .def_prop_ro("chart_count", &PythonUvAtlasResult::chart_count)
+        .def_prop_ro("partition_count", &PythonUvAtlasResult::partition_count)
+        .def_prop_ro("max_stretch", &PythonUvAtlasResult::max_stretch);
 
     module.def("has_uv_atlas_backend", &has_uv_atlas_backend);
     module.def(
         "unwrap_uv",
-        [](const py::array_t<float, py::array::c_style | py::array::forcecast>& positions,
-           const py::array_t<std::uint32_t, py::array::c_style | py::array::forcecast>& indices,
+        [](const FloatInput& positions,
+           const U32Input& indices,
            const std::pair<std::uint32_t, std::uint32_t>& resolution,
            float gutter,
            float max_stretch,
@@ -702,11 +732,11 @@ PYBIND11_MODULE(_photara_drender, module) {
            const std::optional<bool>& quality,
            std::uint32_t parallel_partitions,
            std::uint32_t worker_count) {
-            const auto info = positions.request();
+            const auto info = request(positions);
             if (info.ndim != 2 || info.shape[1] != 3 || info.shape[0] <= 0) {
                 throw std::invalid_argument("positions must have shape [vertex_count, 3]");
             }
-            validate_indices(indices.request());
+            validate_indices(request(indices));
             UvAtlasOptions options;
             options.height = resolution.first;
             options.width = resolution.second;
@@ -728,7 +758,7 @@ PYBIND11_MODULE(_photara_drender, module) {
 
     py::class_<PythonTextureBaker>(module, "TextureBaker")
         .def(py::init<std::uint32_t, bool>(), py::arg("device_index") = 0, py::arg("enable_validation") = false)
-        .def_property_readonly("device_info", &PythonTextureBaker::device_info, py::return_value_policy::reference_internal)
+        .def_prop_ro("device_info", &PythonTextureBaker::device_info, py::rv_policy::reference_internal)
         .def(
             "bake",
             &PythonTextureBaker::bake,
@@ -755,14 +785,14 @@ PYBIND11_MODULE(_photara_drender, module) {
 
     module.def(
         "pad_texture_atlas",
-        [](const py::array_t<float, py::array::c_style | py::array::forcecast>& color,
-           const py::array_t<float, py::array::c_style | py::array::forcecast>& valid_mask,
+        [](const FloatInput& color,
+           const FloatInput& valid_mask,
            std::uint32_t margin,
            const py::object& coverage_mask,
            bool fill_unobserved,
            std::uint32_t maximum_fill_distance) {
-            const auto color_info = color.request();
-            const auto valid_info = valid_mask.request();
+            const auto color_info = request(color);
+            const auto valid_info = request(valid_mask);
             if (color_info.ndim != 3 || color_info.shape[0] <= 0 || color_info.shape[1] <= 0 ||
                 (color_info.shape[2] != 3 && color_info.shape[2] != 4)) {
                 throw std::invalid_argument("color must have shape [height, width, 3 or 4]");
@@ -777,9 +807,9 @@ PYBIND11_MODULE(_photara_drender, module) {
             output.color.assign(color.data(), color.data() + color.size());
             output.valid_mask.assign(valid_mask.data(), valid_mask.data() + valid_mask.size());
             if (!coverage_mask.is_none()) {
-                const auto coverage = py::cast<py::array_t<float, py::array::c_style | py::array::forcecast>>(
+                const auto coverage = py::cast<FloatInput>(
                     coverage_mask);
-                const auto coverage_info = coverage.request();
+                const auto coverage_info = request(coverage);
                 if (coverage_info.ndim != 2 || coverage_info.shape[0] != color_info.shape[0] ||
                     coverage_info.shape[1] != color_info.shape[1]) {
                     throw std::invalid_argument("coverage_mask must match the color dimensions");

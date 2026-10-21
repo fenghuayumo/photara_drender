@@ -32,9 +32,10 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-For an existing checkout, initialize UVAtlas with
-`git submodule update --init third_party/UVAtlas`. Setting `PHOTARA_USE_VENDORED_UVATLAS=OFF`
-uses an installed package instead, or downloads Microsoft's `oct2025` source release on Windows.
+For an existing checkout, initialize the required submodules with
+`git submodule update --init --recursive`. Python bindings require Python 3.10+.
+Setting `PHOTARA_USE_VENDORED_UVATLAS=OFF` uses an installed package instead, or downloads
+Microsoft's `oct2025` source release on Windows.
 
 Build options:
 

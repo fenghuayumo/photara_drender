@@ -16,6 +16,7 @@
 namespace photara_drender {
 
 struct Buffer {
+    photara::vk::Buffer runtime_buffer;
     VkDevice device = VK_NULL_HANDLE;
     VkBuffer handle = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
@@ -23,12 +24,7 @@ struct Buffer {
     void* mapped = nullptr;
 
     Buffer() = default;
-    Buffer(
-        VkPhysicalDevice physical_device,
-        VkDevice logical_device,
-        VkDeviceSize byte_size,
-        VkBufferUsageFlags usage,
-        bool prefer_device_local = false);
+    explicit Buffer(photara::vk::Buffer buffer);
     ~Buffer();
     Buffer(Buffer&& other) noexcept;
     Buffer& operator=(Buffer&& other) noexcept;

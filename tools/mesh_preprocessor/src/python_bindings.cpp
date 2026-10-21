@@ -6,47 +6,77 @@
 #include <utility>
 #include <vector>
 
-#include <pybind11/numpy.h>
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
+#include <nanobind/nanobind.h>
+#include <nanobind/ndarray.h>
+#include <nanobind/stl/array.h>
+#include <nanobind/stl/optional.h>
+#include <nanobind/stl/pair.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
 
 #include "photara_mesh/mesh_ops.hpp"
 #include "photara_mesh/pipeline.hpp"
 
-namespace py = pybind11;
+namespace py = nanobind;
 
 namespace {
 
+using FloatInput = py::ndarray<const float, py::numpy, py::c_contig>;
+using U32Input = py::ndarray<const std::uint32_t, py::numpy, py::c_contig>;
+using FloatOutput = py::ndarray<float, py::numpy>;
+using U32Output = py::ndarray<std::uint32_t, py::numpy>;
+
+struct BufferInfo {
+    std::size_t ndim;
+    std::vector<py::ssize_t> shape;
+};
+
+template <typename... Args>
+BufferInfo request(const py::ndarray<Args...>& array) {
+    BufferInfo info{array.ndim(), {}};
+    info.shape.reserve(info.ndim);
+    for (std::size_t i = 0; i < info.ndim; ++i) {
+        info.shape.push_back(static_cast<py::ssize_t>(array.shape(i)));
+    }
+    return info;
+}
+
 template <typename T>
-std::span<const T> as_span(const py::array_t<T, py::array::c_style | py::array::forcecast>& array) {
+std::span<const T> as_span(const py::ndarray<const T, py::numpy, py::c_contig>& array) {
     return {array.data(), static_cast<std::size_t>(array.size())};
 }
 
-py::array_t<float> vector_to_array(std::vector<float> values, const std::vector<py::ssize_t>& shape) {
-    py::array_t<float> array(shape);
-    if (!values.empty()) {
-        std::memcpy(array.mutable_data(), values.data(), values.size() * sizeof(float));
+template <typename T, typename Array>
+Array vector_to_array(std::vector<T>&& values, const std::vector<py::ssize_t>& shape) {
+    auto* data = new std::vector<T>(std::move(values));
+    py::capsule owner(data, [](void* pointer) noexcept {
+        delete static_cast<std::vector<T>*>(pointer);
+    });
+    std::vector<std::size_t> dimensions;
+    dimensions.reserve(shape.size());
+    for (const auto dimension : shape) {
+        dimensions.push_back(static_cast<std::size_t>(dimension));
     }
-    return array;
+    return Array(data->data(), dimensions.size(), dimensions.data(), owner);
 }
 
-py::array_t<std::uint32_t> vector_to_u32_array(
-    std::vector<std::uint32_t> values,
+FloatOutput vector_to_array(std::vector<float>&& values, const std::vector<py::ssize_t>& shape) {
+    return vector_to_array<float, FloatOutput>(std::move(values), shape);
+}
+
+U32Output vector_to_u32_array(
+    std::vector<std::uint32_t>&& values,
     const std::vector<py::ssize_t>& shape) {
-    py::array_t<std::uint32_t> array(shape);
-    if (!values.empty()) {
-        std::memcpy(array.mutable_data(), values.data(), values.size() * sizeof(std::uint32_t));
-    }
-    return array;
+    return vector_to_array<std::uint32_t, U32Output>(std::move(values), shape);
 }
 
-void validate_positions(const py::buffer_info& info) {
+void validate_positions(const BufferInfo& info) {
     if (info.ndim != 2 || info.shape[1] != 3 || info.shape[0] <= 0) {
         throw std::invalid_argument("positions must have shape [vertex_count, 3]");
     }
 }
 
-void validate_indices(const py::buffer_info& info) {
+void validate_indices(const BufferInfo& info) {
     if (info.ndim != 2 || info.shape[1] != 3 || info.shape[0] <= 0) {
         throw std::invalid_argument("indices must have shape [triangle_count, 3]");
     }
@@ -79,15 +109,15 @@ photara_drender::UvAtlasOptions make_atlas_options(
 
 } // namespace
 
-PYBIND11_MODULE(_photara_mesh, module) {
+NB_MODULE(_photara_mesh, module) {
     module.doc() = "Optional in-memory CGAL mesh preparation and baking pipeline (GPL/commercial)";
 
     module.def("has_instant_meshes_backend", &photara_mesh::has_instant_meshes_backend);
 
     module.def(
         "remesh_field_aligned",
-        [](const py::array_t<float, py::array::c_style | py::array::forcecast>& positions,
-           const py::array_t<std::uint32_t, py::array::c_style | py::array::forcecast>& indices,
+        [](const FloatInput& positions,
+           const U32Input& indices,
            int vertex_count,
            int face_count,
            float scale,
@@ -98,8 +128,8 @@ PYBIND11_MODULE(_photara_mesh, module) {
            bool extrinsic,
            int smooth_iterations,
            bool deterministic) {
-            validate_positions(positions.request());
-            validate_indices(indices.request());
+            validate_positions(request(positions));
+            validate_indices(request(indices));
             photara_mesh::RemeshOptions options;
             options.vertex_count = vertex_count;
             options.face_count = face_count;
@@ -133,12 +163,12 @@ PYBIND11_MODULE(_photara_mesh, module) {
 
     module.def(
         "repair_and_decimate",
-        [](const py::array_t<float, py::array::c_style | py::array::forcecast>& positions,
-           const py::array_t<std::uint32_t, py::array::c_style | py::array::forcecast>& indices,
+        [](const FloatInput& positions,
+           const U32Input& indices,
            std::size_t target_face_count,
            bool check_self_intersections) {
-            validate_positions(positions.request());
-            validate_indices(indices.request());
+            validate_positions(request(positions));
+            validate_indices(request(indices));
             auto mesh = photara_mesh::repair_and_decimate(
                 as_span(positions),
                 as_span(indices),
@@ -156,8 +186,8 @@ PYBIND11_MODULE(_photara_mesh, module) {
 
     module.def(
         "prepare_for_baking",
-        [](const py::array_t<float, py::array::c_style | py::array::forcecast>& positions,
-           const py::array_t<std::uint32_t, py::array::c_style | py::array::forcecast>& indices,
+        [](const FloatInput& positions,
+           const U32Input& indices,
            std::size_t target_face_count,
            bool use_instant_remesh,
            const std::pair<std::uint32_t, std::uint32_t>& resolution,
@@ -166,8 +196,8 @@ PYBIND11_MODULE(_photara_mesh, module) {
            const std::optional<bool>& quality,
            std::uint32_t parallel_partitions,
            std::uint32_t worker_count) {
-            validate_positions(positions.request());
-            validate_indices(indices.request());
+            validate_positions(request(positions));
+            validate_indices(request(indices));
             photara_mesh::PrepareOptions options;
             options.decimate = make_decimate_options(target_face_count, false);
             options.use_instant_remesh = use_instant_remesh;

@@ -35,36 +35,6 @@ void check_vk(VkResult result, const char* operation) {
     }
 }
 
-std::uint32_t find_memory_type(
-    VkPhysicalDevice physical_device,
-    std::uint32_t type_bits,
-    VkMemoryPropertyFlags required_flags) {
-    VkPhysicalDeviceMemoryProperties properties{};
-    vkGetPhysicalDeviceMemoryProperties(physical_device, &properties);
-    for (std::uint32_t i = 0; i < properties.memoryTypeCount; ++i) {
-        if ((type_bits & (1U << i)) != 0 &&
-            (properties.memoryTypes[i].propertyFlags & required_flags) == required_flags) {
-            return i;
-        }
-    }
-    throw std::runtime_error("No compatible Vulkan memory type was found");
-}
-
-std::optional<std::uint32_t> try_find_memory_type(
-    VkPhysicalDevice physical_device,
-    std::uint32_t type_bits,
-    VkMemoryPropertyFlags required_flags) {
-    VkPhysicalDeviceMemoryProperties properties{};
-    vkGetPhysicalDeviceMemoryProperties(physical_device, &properties);
-    for (std::uint32_t i = 0; i < properties.memoryTypeCount; ++i) {
-        if ((type_bits & (1U << i)) != 0 &&
-            (properties.memoryTypes[i].propertyFlags & required_flags) == required_flags) {
-            return i;
-        }
-    }
-    return std::nullopt;
-}
-
 std::vector<std::byte> read_spir_v(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary | std::ios::ate);
     if (!input) {
@@ -234,87 +204,44 @@ bool query_ray_query_support(VkPhysicalDevice physical_device) {
 
 } // namespace
 
-Buffer::Buffer(
-    VkPhysicalDevice physical_device,
-    VkDevice logical_device,
-    VkDeviceSize byte_size,
-    VkBufferUsageFlags usage,
-    bool prefer_device_local)
-    : device(logical_device), size(std::max<VkDeviceSize>(byte_size, 4)) {
-    VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-    buffer_info.size = size;
-    buffer_info.usage = usage | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    check_vk(vkCreateBuffer(device, &buffer_info, nullptr, &handle), "vkCreateBuffer");
+Buffer::Buffer(photara::vk::Buffer buffer)
+    : runtime_buffer(std::move(buffer)),
+      handle(runtime_buffer.handle()),
+      size(runtime_buffer.size()),
+      mapped(runtime_buffer.mapped()) {}
 
-    VkMemoryRequirements requirements{};
-    vkGetBufferMemoryRequirements(device, handle, &requirements);
-    VkMemoryAllocateInfo allocation_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    allocation_info.allocationSize = requirements.size;
-    constexpr auto host_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    const auto preferred_type = prefer_device_local
-        ? try_find_memory_type(
-              physical_device, requirements.memoryTypeBits, host_flags | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
-        : std::nullopt;
-    allocation_info.memoryTypeIndex = preferred_type.value_or(
-        find_memory_type(physical_device, requirements.memoryTypeBits, host_flags));
-    VkMemoryAllocateFlagsInfo allocation_flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
-    if ((usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) != 0) {
-        allocation_flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
-        allocation_info.pNext = &allocation_flags;
-    }
-    check_vk(vkAllocateMemory(device, &allocation_info, nullptr, &memory), "vkAllocateMemory");
-    check_vk(vkBindBufferMemory(device, handle, memory, 0), "vkBindBufferMemory");
-    check_vk(vkMapMemory(device, memory, 0, size, 0, &mapped), "vkMapMemory");
-}
+Buffer::~Buffer() = default;
 
-Buffer::~Buffer() {
-    if (device != VK_NULL_HANDLE && memory != VK_NULL_HANDLE) {
-        if (mapped != nullptr) {
-            vkUnmapMemory(device, memory);
-        }
-        vkDestroyBuffer(device, handle, nullptr);
-        vkFreeMemory(device, memory, nullptr);
-    }
-}
-
-Buffer::Buffer(Buffer&& other) noexcept {
-    *this = std::move(other);
-}
+Buffer::Buffer(Buffer&& other) noexcept
+    : runtime_buffer(std::move(other.runtime_buffer)),
+      device(std::exchange(other.device, VK_NULL_HANDLE)),
+      handle(std::exchange(other.handle, VK_NULL_HANDLE)),
+      memory(std::exchange(other.memory, VK_NULL_HANDLE)),
+      size(std::exchange(other.size, 0)),
+      mapped(std::exchange(other.mapped, nullptr)) {}
 
 Buffer& Buffer::operator=(Buffer&& other) noexcept {
     if (this != &other) {
-        std::swap(device, other.device);
-        std::swap(handle, other.handle);
-        std::swap(memory, other.memory);
-        std::swap(size, other.size);
-        std::swap(mapped, other.mapped);
+        runtime_buffer = std::move(other.runtime_buffer);
+        device = std::exchange(other.device, VK_NULL_HANDLE);
+        handle = std::exchange(other.handle, VK_NULL_HANDLE);
+        memory = std::exchange(other.memory, VK_NULL_HANDLE);
+        size = std::exchange(other.size, 0);
+        mapped = std::exchange(other.mapped, nullptr);
     }
     return *this;
 }
 
 void Buffer::upload(const void* source, std::size_t byte_size, std::size_t offset) {
-    if (offset + byte_size > size) {
-        throw std::out_of_range("Buffer upload exceeds allocation");
-    }
-    if (byte_size != 0) {
-        std::memcpy(static_cast<std::byte*>(mapped) + offset, source, byte_size);
-    }
+    runtime_buffer.upload(source, byte_size, offset);
 }
 
 void Buffer::download(void* destination, std::size_t byte_size, std::size_t offset) const {
-    if (offset + byte_size > size) {
-        throw std::out_of_range("Buffer download exceeds allocation");
-    }
-    if (byte_size != 0) {
-        std::memcpy(destination, static_cast<const std::byte*>(mapped) + offset, byte_size);
-    }
+    runtime_buffer.download(destination, byte_size, offset);
 }
 
 VkDeviceAddress Buffer::device_address() const {
-    VkBufferDeviceAddressInfo address_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
-    address_info.buffer = handle;
-    return vkGetBufferDeviceAddress(device, &address_info);
+    return runtime_buffer.device_address();
 }
 
 Context::Impl::Impl(const ContextOptions& options) {
@@ -481,7 +408,12 @@ Buffer Context::Impl::create_buffer(
     VkDeviceSize size,
     VkBufferUsageFlags usage,
     bool prefer_device_local) const {
-    return Buffer(physical_device, device, size, usage, prefer_device_local);
+    const auto memory_kind = prefer_device_local
+        ? photara::vk::MemoryKind::host_visible_device_local
+        : photara::vk::MemoryKind::host_visible;
+    Buffer buffer(runtime.create_buffer(size, memory_kind, usage));
+    buffer.device = device;
+    return buffer;
 }
 
 ComputePipeline Context::Impl::create_pipeline(

@@ -264,10 +264,12 @@ TextureRefineOutput TextureRefiner::refine(
     auto loss_buffer = impl_->context_.create_buffer(total_loss_count * sizeof(float), 0, true);
     auto seam_buffer = impl_->context_.create_buffer(std::max<std::size_t>(seam_uv_pairs.size_bytes(), 4), 0, true);
     texture_buffer.upload(initial_texture.data(), initial_texture.size_bytes());
-    std::memset(gradient_buffer.mapped, 0, static_cast<std::size_t>(gradient_buffer.size));
-    std::memset(first_moment_buffer.mapped, 0, static_cast<std::size_t>(first_moment_buffer.size));
-    std::memset(second_moment_buffer.mapped, 0, static_cast<std::size_t>(second_moment_buffer.size));
-    std::memset(loss_buffer.mapped, 0, static_cast<std::size_t>(loss_buffer.size));
+    const std::vector<float> zero_texture(initial_texture.size(), 0.0F);
+    gradient_buffer.upload(zero_texture.data(), initial_texture.size_bytes());
+    first_moment_buffer.upload(zero_texture.data(), initial_texture.size_bytes());
+    second_moment_buffer.upload(zero_texture.data(), initial_texture.size_bytes());
+    const std::vector<float> zero_losses(total_loss_count, 0.0F);
+    loss_buffer.upload(zero_losses.data(), loss_buffer.size);
     if (!seam_uv_pairs.empty()) {
         seam_buffer.upload(seam_uv_pairs.data(), seam_uv_pairs.size_bytes());
     }

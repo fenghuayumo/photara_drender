@@ -141,17 +141,9 @@ else()
 endif()
 
 if(PHOTARA_BUILD_PYTHON_BINDINGS)
-    find_package(Python 3.9 REQUIRED COMPONENTS Interpreter Development.Module NumPy)
-    execute_process(
-        COMMAND "${Python_EXECUTABLE}" -m pybind11 --cmakedir
-        OUTPUT_VARIABLE pybind11_cmake_dir
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        RESULT_VARIABLE pybind11_result)
-    if(NOT pybind11_result EQUAL 0)
-        message(FATAL_ERROR "pybind11 is required when PHOTARA_BUILD_PYTHON_BINDINGS=ON")
-    endif()
-    list(APPEND CMAKE_PREFIX_PATH "${pybind11_cmake_dir}")
-    find_package(pybind11 CONFIG REQUIRED)
+    find_package(Python 3.10 REQUIRED COMPONENTS Interpreter Development.Module)
+    set(NB_TEST OFF CACHE BOOL "Compile nanobind tests" FORCE)
+    add_subdirectory(third_party/nanobind)
 
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python/photara_drender")
     configure_file(
@@ -179,8 +171,8 @@ if(PHOTARA_BUILD_PYTHON_BINDINGS)
         "${CMAKE_CURRENT_BINARY_DIR}/python/photara_drender/mesh_processing.py"
         COPYONLY)
 
-    pybind11_add_module(_photara_drender python/bindings.cpp)
-    target_link_libraries(_photara_drender PRIVATE photara::render Python::NumPy)
+    nanobind_add_module(_photara_drender python/bindings.cpp)
+    target_link_libraries(_photara_drender PRIVATE photara::render)
     set_target_properties(_photara_drender PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python/photara_drender"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/python/photara_drender")
