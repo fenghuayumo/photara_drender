@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <limits>
@@ -307,7 +308,11 @@ Context::Impl::Impl(const ContextOptions& options) {
     if (options.device_index >= device_count) {
         throw std::out_of_range("Vulkan device_index is out of range");
     }
-    physical_device = devices[options.device_index];
+    std::size_t selected = options.device_index;
+    if (const char* index = std::getenv("TINYTENSOR_VULKAN_DEVICE"); index && *index)
+        selected = std::stoul(index);
+    if (selected >= devices.size()) throw std::out_of_range("Selected Vulkan GPU is unavailable");
+    physical_device = devices[selected];
     device_info = make_device_info(physical_device);
     queue_family_index = find_compute_queue_family(physical_device);
 
